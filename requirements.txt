@@ -4,4 +4,4 @@ groq
 requests
 python-dotenv
 streamlit-mic-recorder
-supabase
+bcrypt
