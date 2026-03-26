@@ -112,14 +112,14 @@ def enviar_email(dest, asunto, cuerpo):
 # ── Telegram ──────────────────────────────────────────────────────────────────
 def telegram(msg):
     try:
-        token=os.getenv("TELEGRAM_BOT_TOKEN","")
-        chat=os.getenv("TELEGRAM_CHAT_ID_ADMIN","")
-        if token and chat:
-            r=req.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id":chat,"text":msg,"parse_mode":"HTML"},timeout=8)
-            return r.status_code==200
-    except: pass
-    return False
+        token=os.getenv("TELEGRAM_BOT_TOKEN","").strip()
+        chat=os.getenv("TELEGRAM_CHAT_ID_ADMIN","").strip()
+        if not token or not chat: return False, "Token o Chat ID vacío"
+        r=req.post(f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id":chat,"text":msg,"parse_mode":"HTML"},timeout=10)
+        if r.status_code==200: return True, "OK"
+        return False, f"HTTP {r.status_code}: {r.text[:200]}"
+    except Exception as e: return False, str(e)
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 LINEAS = ["Automatización de accesos","Videovigilancia CCTV","Control de acceso y biometría",
@@ -186,12 +186,12 @@ def juez_fn(pregunta, respuestas):
         import google.generativeai as genai
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY",""))
         resumen="\n\n".join([f"--- {r['ia']} ---\n{r['respuesta']}" for r in respuestas if r["ok"]])
-        r=genai.GenerativeModel("gemini-2.0-flash").generate_content(
+        r=genai.GenerativeModel("gemini-1.5-flash").generate_content(
             f"{CONTEXTO}\nPregunta: \"{pregunta}\"\nRespuestas:\n{resumen}\nSintetiza empático, profesional, práctico. Sin encabezados.")
         return r.text.strip()
     except Exception as e: return f"❌ Error síntesis: {e}"
 
-def ia_generar(prompt, modelo="gemini-2.0-flash"):
+def ia_generar(prompt, modelo="gemini-1.5-flash"):
     try:
         import google.generativeai as genai
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY",""))
@@ -206,7 +206,7 @@ def ia_extraer_doc(b64, tipo="imagen"):
         prompt="""Extrae datos de este documento. Devuelve SOLO JSON válido sin markdown:
 {"razon_social":"","nit":"","direccion":"","municipio":"","departamento":"",
 "telefono":"","email":"","contacto":"","cargo_contacto":"","responsabilidad_fiscal":"","regimen_fiscal":""}"""
-        model=genai.GenerativeModel("gemini-2.0-flash")
+        model=genai.GenerativeModel("gemini-1.5-flash")
         mime="application/pdf" if tipo=="pdf" else "image/jpeg"
         r=model.generate_content([prompt,{"inline_data":{"mime_type":mime,"data":b64}}])
         txt=r.text.strip().replace("```json","").replace("```","").strip()
@@ -235,90 +235,25 @@ pre{{white-space:pre-wrap;line-height:1.6;}}
 
 # ── Micrófono HTML5 nativo ────────────────────────────────────────────────────
 def campo_voz_html5(label, key, height=100, placeholder="Escribe o usa el micrófono..."):
-    """Campo de texto con micrófono HTML5 nativo — funciona en Chrome, Edge, Samsung"""
+    """Campo de texto con soporte de voz via streamlit_mic_recorder"""
     if key not in st.session_state: st.session_state[key]=""
-
-    mic_html = f"""
-    <div style="margin-bottom:4px;">
-        <button id="btn_{key}" onclick="toggleMic_{key}()"
-            style="background:#cc0000;color:#fff;border:none;border-radius:8px;
-            padding:8px 16px;font-size:14px;font-weight:700;cursor:pointer;
-            display:inline-flex;align-items:center;gap:6px;touch-action:manipulation;">
-            🎤 Dictar {label}
-        </button>
-        <span id="status_{key}" style="color:#888;font-size:12px;margin-left:8px;"></span>
-    </div>
-    <div id="preview_{key}" style="background:#0a1a00;border:1px solid #4ade80;border-radius:6px;
-        padding:8px;margin:4px 0;color:#4ade80;font-size:13px;min-height:32px;display:none;"></div>
-    <script>
-    var rec_{key} = null;
-    var transcripto_{key} = '';
-    function toggleMic_{key}() {{
-        if (rec_{key} && rec_{key}.state === 'recording') {{
-            rec_{key}.stop();
-            document.getElementById('btn_{key}').innerHTML = '🎤 Dictar {label}';
-            document.getElementById('btn_{key}').style.background = '#cc0000';
-            document.getElementById('status_{key}').innerHTML = '';
-        }} else {{
-            startMic_{key}();
-        }}
-    }}
-    function startMic_{key}() {{
-        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {{
-            document.getElementById('status_{key}').innerHTML = '⚠️ Usa Chrome para voz';
-            return;
-        }}
-        var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-        rec_{key} = new SR();
-        rec_{key}.lang = 'es-CO';
-        rec_{key}.continuous = true;
-        rec_{key}.interimResults = true;
-        document.getElementById('btn_{key}').innerHTML = '⏹️ Detener';
-        document.getElementById('btn_{key}').style.background = '#166534';
-        document.getElementById('status_{key}').innerHTML = '🔴 Grabando...';
-        document.getElementById('preview_{key}').style.display = 'block';
-        rec_{key}.onresult = function(e) {{
-            var interim = '';
-            var final_text = '';
-            for (var i = e.resultIndex; i < e.results.length; i++) {{
-                if (e.results[i].isFinal) {{
-                    final_text += e.results[i][0].transcript + ' ';
-                }} else {{
-                    interim += e.results[i][0].transcript;
-                }}
-            }}
-            if (final_text) transcripto_{key} += final_text;
-            document.getElementById('preview_{key}').innerHTML = 
-                (transcripto_{key} + '<em style="color:#888"> ' + interim + '</em>');
-            // Enviar al padre para actualizar el campo
-            window.parent.postMessage({{
-                type: 'voz_update',
-                key: '{key}',
-                texto: transcripto_{key}.trim()
-            }}, '*');
-        }};
-        rec_{key}.onerror = function(e) {{
-            document.getElementById('status_{key}').innerHTML = '⚠️ ' + e.error;
-            document.getElementById('btn_{key}').innerHTML = '🎤 Dictar {label}';
-            document.getElementById('btn_{key}').style.background = '#cc0000';
-        }};
-        rec_{key}.onend = function() {{
-            document.getElementById('status_{key}').innerHTML = '';
-        }};
-        rec_{key}.start();
-    }}
-    </script>"""
-
-    st.components.v1.html(mic_html, height=80, scrolling=False)
-
-    # Campo de texto editable
-    nuevo_val = st.text_area(
-        label, value=st.session_state[key],
-        height=height, key=f"ta_{key}", placeholder=placeholder
-    )
-    if nuevo_val != st.session_state[key]:
-        st.session_state[key] = nuevo_val
-    return st.session_state[key]
+    try:
+        from streamlit_mic_recorder import speech_to_text
+        c1,c2=st.columns([1,5])
+        with c1:
+            tv=speech_to_text(language="es",start_prompt="🎤",stop_prompt="⏹️",
+                just_once=True,use_container_width=True,key=f"mic_{key}")
+        with c2:
+            st.caption(f"Presiona 🎤 para dictar · Chrome recomendado")
+        if tv:
+            st.session_state[key]=(st.session_state.get(key,"")+" "+tv).strip()
+            st.rerun()
+    except:
+        pass
+    val=st.text_area(label,value=st.session_state.get(key,""),
+        height=height,key=f"ta_{key}",placeholder=placeholder)
+    st.session_state[key]=val
+    return val
 
 # ── Config página ─────────────────────────────────────────────────────────────
 st.set_page_config(page_title="JandrexT",page_icon="🧠",
@@ -1442,9 +1377,10 @@ elif sec=="config" and rol=="admin":
         tg_chat=os.getenv("TELEGRAM_CHAT_ID_ADMIN","No configurado")
         st.info(f"**Bot:** @JandrexTAsistencia_bot | **Chat ID:** {tg_chat}")
         if st.button("📱 Enviar mensaje de prueba",type="primary"):
-            ok=telegram(f"✅ <b>Prueba JandrexT v13</b>\nPlataforma funcionando correctamente.\n{fecha_str()}")
+            ok,_=telegram(f"✅ <b>Prueba JandrexT v13</b>\nPlataforma funcionando correctamente.\n{fecha_str()}")
+            ok, msg_err = ok if isinstance(ok, tuple) else (ok, "")
             if ok: st.success("✅ Mensaje enviado correctamente")
-            else: st.error("❌ Error — verifica el token y chat ID en Secrets")
+            else: st.error(f"❌ Error: {msg_err}")
 
     with tab3:
         st.markdown("### 🧪 Limpieza de datos de prueba")
