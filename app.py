@@ -296,19 +296,19 @@ html,body,[class*="css"]{{font-family:'Inter','Helvetica Neue',Arial,sans-serif;
 /* LOGIN */
 .login-wrap{{max-width:480px;margin:2.5rem auto;background:#0f0000;
     border:1px solid #cc0000;border-radius:16px;padding:2.5rem;}}
-.logo-login-j{{font-family:'Disclaimer-Classic',sans-serif;color:#cc0000;
-    font-size:6.5rem;font-weight:900;letter-spacing:10px;line-height:1.1;display:inline;
-    text-shadow:-1px -1px 0 #fff,1px -1px 0 #fff,-1px 1px 0 #fff,1px 1px 0 #fff;}}
-.logo-login-mid{{font-family:'Disclaimer-Classic',sans-serif;color:#fff;
-    font-size:3.8rem;font-weight:900;letter-spacing:10px;line-height:1.1;display:inline;
-    text-shadow:-1px -1px 0 #cc0000,1px -1px 0 #cc0000,-1px 1px 0 #cc0000,1px 1px 0 #cc0000;}}
-.logo-login-t{{font-family:'Disclaimer-Classic',sans-serif;color:#cc0000;
-    font-size:6.5rem;font-weight:900;letter-spacing:10px;line-height:1.1;display:inline;
-    text-shadow:-1px -1px 0 #fff,1px -1px 0 #fff,-1px 1px 0 #fff,1px 1px 0 #fff;}}
-.logo-login-sub{{font-family:'Inter',sans-serif;color:#666;font-size:0.9rem;
-    letter-spacing:5px;text-transform:uppercase;margin:0.6rem 0 0;}}
-.logo-login-lema{{font-family:'JennaSue',sans-serif;color:#cc4444;
-    font-size:1.6rem;margin:0.4rem 0;}}
+.logo-login-j{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;
+    font-size:4.35rem;font-weight:900;letter-spacing:6px;line-height:1.15;display:inline;
+    -webkit-text-stroke:2px #fff;text-stroke:2px #fff;}}
+.logo-login-mid{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#fff;
+    font-size:2.62rem;font-weight:900;letter-spacing:6px;line-height:1.15;display:inline;
+    -webkit-text-stroke:1.5px #cc0000;text-stroke:1.5px #cc0000;}}
+.logo-login-t{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;
+    font-size:4.35rem;font-weight:900;letter-spacing:6px;line-height:1.15;display:inline;
+    -webkit-text-stroke:2px #fff;text-stroke:2px #fff;}}
+.logo-login-sub{{font-family:'Inter',sans-serif;color:#666;font-size:0.82rem;
+    letter-spacing:5px;text-transform:uppercase;margin:0.5rem 0 0;}}
+.logo-login-lema{{font-family:'JennaSue','Georgia',serif;color:#cc4444;
+    font-size:1.4rem;margin:0.4rem 0;font-style:italic;}}
 
 /* HEADER */
 .header-inst{{background:linear-gradient(135deg,#0a0000,#1a0000);border-radius:12px;
@@ -316,23 +316,23 @@ html,body,[class*="css"]{{font-family:'Inter','Helvetica Neue',Arial,sans-serif;
     display:flex;align-items:center;justify-content:space-between;gap:1rem;}}
 .h-logo{{height:70px;width:auto;flex-shrink:0;}}
 .h-brand{{flex:1;}}
-.h-name{{font-family:'Disclaimer-Classic',sans-serif;color:#fff;font-size:2.8rem;
-    font-weight:900;letter-spacing:7px;margin:0;line-height:1.1;}}
-.h-acc{{color:#cc0000;text-shadow:-1px -1px 0 #fff,1px 1px 0 #fff;}}
-.h-lema{{font-family:'JennaSue',sans-serif;color:#cc4444;font-size:1.3rem;margin:0.1rem 0;}}
+.h-name{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#fff;font-size:2.6rem;
+    font-weight:900;letter-spacing:5px;margin:0;line-height:1.1;}}
+.h-acc{{color:#cc0000;-webkit-text-stroke:1.5px #fff;font-size:3.2rem;}}
+.h-lema{{font-family:'JennaSue','Georgia',serif;color:#cc4444;font-size:1.05rem;margin:0.1rem 0;font-style:italic;}}
 .h-sub{{font-family:'Inter',sans-serif;color:#444;font-size:0.65rem;
     letter-spacing:3px;text-transform:uppercase;margin:0;}}
 .h-user{{text-align:right;flex-shrink:0;}}
-.h-saludo{{font-family:'JennaSue',sans-serif;color:#cc6666;font-size:1.2rem;}}
-.h-nombre{{color:#fff;font-weight:700;font-size:1.1rem;}}
-.h-rol{{color:#cc0000;font-size:0.78rem;letter-spacing:1px;text-transform:uppercase;}}
-.h-fecha{{color:#555;font-size:0.78rem;}}
+.h-saludo{{font-family:'JennaSue','Georgia',serif;color:#cc6666;font-size:1.1rem;font-style:italic;}}
+.h-nombre{{color:#fff;font-weight:700;font-size:1.05rem;}}
+.h-rol{{color:#cc0000;font-size:0.72rem;letter-spacing:1px;text-transform:uppercase;}}
+.h-fecha{{color:#555;font-size:0.75rem;}}
 
 /* SIDEBAR */
 .sb-wrap{{background:#0f0000;border:1px solid #cc0000;border-radius:10px;
     padding:1rem;text-align:center;margin-bottom:0.5rem;}}
-.sb-name{{font-family:'Disclaimer-Classic',sans-serif;color:#fff;
-    font-size:1.2rem;font-weight:900;margin:0;letter-spacing:4px;}}
+.sb-name{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#fff;
+    font-size:1.1rem;font-weight:900;margin:0;letter-spacing:3px;}}
 .sb-acc{{color:#cc0000;}}
 .sb-sub{{font-family:'Inter',sans-serif;color:#cc0000;font-size:0.65rem;
     margin:0;letter-spacing:2px;text-transform:uppercase;}}
