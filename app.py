@@ -10,6 +10,7 @@ import pytz
 
 load_dotenv()
 
+# v14.1 - Fix Gemini modelo
 # ── Zona horaria Colombia ─────────────────────────────────────────────────────
 TZ_COL = pytz.timezone("America/Bogota")
 def ahora(): return datetime.now(TZ_COL)
@@ -186,7 +187,7 @@ def juez_fn(pregunta, respuestas):
         import google.generativeai as genai
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY",""))
         resumen="\n\n".join([f"--- {r['ia']} ---\n{r['respuesta']}" for r in respuestas if r["ok"]])
-        r=genai.GenerativeModel("gemini-2.0-flash").generate_content(
+        r=genai.GenerativeModel("gemini-1.5-flash").generate_content(
             f"{CONTEXTO}\nPregunta: \"{pregunta}\"\nRespuestas:\n{resumen}\nSintetiza empático, profesional, práctico. Sin encabezados.")
         return r.text.strip()
     except Exception as e: return f"❌ Error síntesis: {e}"
@@ -206,7 +207,7 @@ def ia_extraer_doc(b64, tipo="imagen"):
         prompt="""Extrae datos de este documento. Devuelve SOLO JSON válido sin markdown:
 {"razon_social":"","nit":"","direccion":"","municipio":"","departamento":"",
 "telefono":"","email":"","contacto":"","cargo_contacto":"","responsabilidad_fiscal":"","regimen_fiscal":""}"""
-        model=genai.GenerativeModel("gemini-2.0-flash")
+        model=genai.GenerativeModel("gemini-1.5-flash")
         mime="application/pdf" if tipo=="pdf" else "image/jpeg"
         r=model.generate_content([prompt,{"inline_data":{"mime_type":mime,"data":b64}}])
         txt=r.text.strip().replace("```json","").replace("```","").strip()
@@ -320,92 +321,83 @@ def panel_voz_global(campos_disponibles, seccion_key):
 
 
 def campo_voz_html5(label, key, height=100, placeholder="Escribe o usa el micrófono..."):
-    """Campo de texto con micrófono HTML5 nativo — funciona en Chrome, Edge, Samsung"""
+    """Campo de texto simple"""
     if key not in st.session_state: st.session_state[key]=""
+    val=st.text_area(label,value=st.session_state.get(key,""),
+        height=height,key=f"ta_{key}",placeholder=placeholder)
+    st.session_state[key]=val
+    return val
 
-    mic_html = f"""
-    <div style="margin-bottom:4px;">
-        <button id="btn_{key}" onclick="toggleMic_{key}()"
-            style="background:#cc0000;color:#fff;border:none;border-radius:8px;
-            padding:8px 16px;font-size:14px;font-weight:700;cursor:pointer;
-            display:inline-flex;align-items:center;gap:6px;touch-action:manipulation;">
-            🎤 Dictar {label}
-        </button>
-        <span id="status_{key}" style="color:#888;font-size:12px;margin-left:8px;"></span>
-    </div>
-    <div id="preview_{key}" style="background:#0a1a00;border:1px solid #4ade80;border-radius:6px;
-        padding:8px;margin:4px 0;color:#4ade80;font-size:13px;min-height:32px;display:none;"></div>
-    <script>
-    var rec_{key} = null;
-    var transcripto_{key} = '';
-    function toggleMic_{key}() {{
-        if (rec_{key} && rec_{key}.state === 'recording') {{
-            rec_{key}.stop();
-            document.getElementById('btn_{key}').innerHTML = '🎤 Dictar {label}';
-            document.getElementById('btn_{key}').style.background = '#cc0000';
-            document.getElementById('status_{key}').innerHTML = '';
-        }} else {{
-            startMic_{key}();
-        }}
-    }}
-    function startMic_{key}() {{
-        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {{
-            document.getElementById('status_{key}').innerHTML = '⚠️ Usa Chrome para voz';
-            return;
-        }}
-        var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-        rec_{key} = new SR();
-        rec_{key}.lang = 'es-CO';
-        rec_{key}.continuous = true;
-        rec_{key}.interimResults = true;
-        document.getElementById('btn_{key}').innerHTML = '⏹️ Detener';
-        document.getElementById('btn_{key}').style.background = '#166534';
-        document.getElementById('status_{key}').innerHTML = '🔴 Grabando...';
-        document.getElementById('preview_{key}').style.display = 'block';
-        rec_{key}.onresult = function(e) {{
-            var interim = '';
-            var final_text = '';
-            for (var i = e.resultIndex; i < e.results.length; i++) {{
-                if (e.results[i].isFinal) {{
-                    final_text += e.results[i][0].transcript + ' ';
-                }} else {{
-                    interim += e.results[i][0].transcript;
-                }}
-            }}
-            if (final_text) transcripto_{key} += final_text;
-            document.getElementById('preview_{key}').innerHTML = 
-                (transcripto_{key} + '<em style="color:#888"> ' + interim + '</em>');
-            // Enviar al padre para actualizar el campo
-            window.parent.postMessage({{
-                type: 'voz_update',
-                key: '{key}',
-                texto: transcripto_{key}.trim()
-            }}, '*');
-        }};
-        rec_{key}.onerror = function(e) {{
-            document.getElementById('status_{key}').innerHTML = '⚠️ ' + e.error;
-            document.getElementById('btn_{key}').innerHTML = '🎤 Dictar {label}';
-            document.getElementById('btn_{key}').style.background = '#cc0000';
-        }};
-        rec_{key}.onend = function() {{
-            document.getElementById('status_{key}').innerHTML = '';
-        }};
-        rec_{key}.start();
-    }}
-    </script>"""
+def mic_global(seccion_key, campos):
+    """Panel de voz Web Speech API nativa"""
+    opts="".join([f'<option value="{c}">{c}</option>' for c in campos.keys()])
+    h=f"""<div style="background:#0a0f00;border:1px solid #cc0000;border-radius:10px;padding:12px;margin-bottom:8px;">
+<p style="color:#cc0000;font-size:11px;font-weight:700;letter-spacing:2px;margin:0 0 8px;">DICTAR POR VOZ — elige el campo y presiona Insertar</p>
+<div style="display:flex;gap:8px;margin-bottom:8px;">
+<button id="s{seccion_key}" onclick="go{seccion_key}()"
+style="flex:1;background:#cc0000;color:#fff;border:none;border-radius:8px;padding:10px 8px;font-size:13px;font-weight:700;cursor:pointer;">
+Iniciar grabacion</button>
+<button id="p{seccion_key}" onclick="stop{seccion_key}()" disabled
+style="flex:1;background:#1a0000;color:#555;border:1px solid #3a0000;border-radius:8px;padding:10px 8px;font-size:13px;font-weight:700;">
+Detener</button></div>
+<div id="st{seccion_key}" style="color:#888;font-size:12px;margin-bottom:6px;">Chrome recomendado · Presiona Iniciar y habla</div>
+<div id="pr{seccion_key}" style="background:#0a1a00;border:1px solid #166534;border-radius:6px;
+padding:8px;color:#4ade80;font-size:13px;min-height:28px;margin-bottom:8px;display:none;word-break:break-word;"></div>
+<div style="display:flex;gap:6px;flex-wrap:wrap;">
+<select id="cs{seccion_key}" style="flex:1;min-width:120px;background:#1a0000;color:#ccc;border:1px solid #3a0000;
+border-radius:6px;padding:8px;font-size:12px;">{opts}</select>
+<button onclick="ins{seccion_key}()" style="background:#166534;color:#fff;border:none;
+border-radius:6px;padding:8px 12px;font-size:13px;font-weight:700;cursor:pointer;">Insertar</button>
+<button onclick="clr{seccion_key}()" style="background:#1a0000;color:#888;border:1px solid #3a0000;
+border-radius:6px;padding:8px;font-size:13px;cursor:pointer;">X</button></div></div>
+<script>(function(){{
+var r=null,t='';
+window.go{seccion_key}=function(){{
+if(!('webkitSpeechRecognition' in window||'SpeechRecognition' in window)){{
+document.getElementById('st{seccion_key}').innerHTML='<span style="color:#f87171">Necesitas Google Chrome</span>';return;}}
+var S=window.SpeechRecognition||window.webkitSpeechRecognition;
+r=new S();r.lang='es-CO';r.continuous=true;r.interimResults=true;
+document.getElementById('s{seccion_key}').disabled=true;
+document.getElementById('s{seccion_key}').style.opacity='0.5';
+document.getElementById('p{seccion_key}').disabled=false;
+document.getElementById('p{seccion_key}').style.background='#cc0000';
+document.getElementById('p{seccion_key}').style.color='#fff';
+document.getElementById('p{seccion_key}').style.border='none';
+document.getElementById('st{seccion_key}').innerHTML='<span style="color:#4ade80">Grabando... habla ahora</span>';
+document.getElementById('pr{seccion_key}').style.display='block';
+r.onresult=function(e){{var i='',f='';
+for(var x=e.resultIndex;x<e.results.length;x++){{
+if(e.results[x].isFinal)f+=e.results[x][0].transcript+' ';
+else i+=e.results[x][0].transcript;}}
+if(f)t+=f;
+document.getElementById('pr{seccion_key}').innerHTML='<b>'+t+'</b><em style="color:#888"> '+i+'</em>';}};
+r.onerror=function(e){{document.getElementById('st{seccion_key}').innerHTML='<span style="color:#f87171">Error: '+e.error+'</span>';}};
+r.start();}};
+window.stop{seccion_key}=function(){{if(r)r.stop();
+document.getElementById('s{seccion_key}').disabled=false;
+document.getElementById('s{seccion_key}').style.opacity='1';
+document.getElementById('p{seccion_key}').disabled=true;
+document.getElementById('p{seccion_key}').style.background='#1a0000';
+document.getElementById('p{seccion_key}').style.color='#555';
+document.getElementById('p{seccion_key}').style.border='1px solid #3a0000';
+document.getElementById('st{seccion_key}').innerHTML='<span style="color:#facc15">Listo. Selecciona campo e Insertar</span>';}};
+window.ins{seccion_key}=function(){{
+if(!t.trim())return;
+var c=document.getElementById('cs{seccion_key}').value;
+document.getElementById('st{seccion_key}').innerHTML='<span style="color:#4ade80">Copiado: '+t.trim().substring(0,40)+'...</span><br><small style="color:#888">Pega con Ctrl+V en el campo correspondiente</small>';
+try{{navigator.clipboard.writeText(t.trim());}}catch(e){{}}
+}};
+window.clr{seccion_key}=function(){{t='';
+document.getElementById('pr{seccion_key}').innerHTML='';
+document.getElementById('pr{seccion_key}').style.display='none';
+document.getElementById('st{seccion_key}').innerHTML='Listo para grabar';}};
+}})();
+</script>"""
+    st.components.v1.html(h, height=215, scrolling=False)
+    st.caption("💡 Tras Insertar, el texto se copia al portapapeles — pégalo con Ctrl+V (o mantén pulsado en móvil) en el campo deseado.")
 
-    st.components.v1.html(mic_html, height=80, scrolling=False)
 
-    # Campo de texto editable
-    nuevo_val = st.text_area(
-        label, value=st.session_state[key],
-        height=height, key=f"ta_{key}", placeholder=placeholder
-    )
-    if nuevo_val != st.session_state[key]:
-        st.session_state[key] = nuevo_val
-    return st.session_state[key]
-
-# ── Config página ─────────────────────────────────────────────────────────────
+# ── Config página# ── Config página ─────────────────────────────────────────────────────────────
 st.set_page_config(page_title="JandrexT",page_icon="🧠",
     layout="wide",initial_sidebar_state="expanded")
 
@@ -621,7 +613,7 @@ st.markdown(f"""<div class="header-inst">
     <div class="h-brand">
         <p class="h-name">Jandre<span class="h-acc">x</span>T</p>
         <p class="h-lema">Apasionados por el buen servicio</p>
-        <p class="h-sub">Soluciones Integrales · Plataforma v13.0</p>
+        <p class="h-sub">Soluciones Integrales · Plataforma v14.0</p>
     </div>
     <div class="h-user">
         <div class="h-saludo">{saludo},</div>
@@ -1570,12 +1562,12 @@ elif sec=="config" and rol=="admin":
         c1.metric("Aliados",total_a)
         c2.metric("Tareas pendientes",total_t)
         c3.metric("Manuales",total_m)
-        st.caption(f"Última actualización: {fecha_str()} | Plataforma v13.0 | JandrexT Soluciones Integrales")
+        st.caption(f"Última actualización: {fecha_str()} | Plataforma v14.0 | JandrexT Soluciones Integrales")
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown(f"""<div class="footer-inst">
     <span class="footer-acc">JandrexT</span> Soluciones Integrales &nbsp;·&nbsp;
     Director de Proyectos: <span class="footer-acc">Andrés Tapiero</span> &nbsp;·&nbsp;
-    Plataforma v13.0 &nbsp;·&nbsp; 🔒 Sistema Interno<br>
+    Plataforma v14.0 &nbsp;·&nbsp; 🔒 Sistema Interno<br>
     <span class="footer-lema-j">Apasionados por el buen servicio</span>
 </div>""", unsafe_allow_html=True)
