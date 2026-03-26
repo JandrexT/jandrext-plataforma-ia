@@ -159,6 +159,23 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif;}
 .divider{border:none;border-top:1px solid #1a0000;margin:1rem 0;}
 .sec-title{color:#cc0000;font-size:0.72rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin:0.8rem 0 0.4rem 0;}
 .notif-alerta{background:#1a0a00;border:1px solid #cc6600;border-radius:8px;padding:0.8rem 1rem;margin-bottom:0.4rem;color:#ffcc88;}
+
+/* ── RESPONSIVE MÓVIL ── */
+@media (max-width: 768px) {
+    .header-inst{flex-direction:column;gap:0.5rem;padding:1rem;}
+    .header-user{text-align:left;}
+    .stButton>button{min-height:52px;font-size:1rem;border-radius:12px;}
+    .stTextInput>div>input{min-height:48px;font-size:1rem;border-radius:10px;}
+    .stSelectbox>div>div{min-height:48px;font-size:1rem;}
+    .stTextArea>div>textarea{font-size:1rem;}
+    .stForm{padding:0.5rem;}
+    h2{font-size:1.4rem;}
+    h3{font-size:1.1rem;}
+    .ia-card{padding:0.7rem;}
+    .juez-card{padding:1rem;}
+    .footer-inst{font-size:0.65rem;}
+    div[data-testid="column"]{min-width:100%;}
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -485,40 +502,142 @@ elif sec == "agenda" and tiene_modulo(u, "agenda"):
 # ══════════════════════════════════════════════════════════════════════════════
 elif sec == "asistencia" and tiene_modulo(u, "asistencia"):
     st.markdown("## 👥 Control de Asistencia")
-    col_i, col_r = st.columns([2,1])
-    with col_i:
-        st.info(f"""**Bot Telegram:** @JandrexTAsistencia_bot
-**Entrada:** `Llegué · Proyecto · Tarea`
-**Salida:** `Salí`""")
-        hoy = datetime.now().strftime("%Y-%m-%d")
-        registros = supa("asistencia", filtro=f"?fecha=gte.{hoy}T00:00:00&order=fecha.desc")
-        st.markdown("### 📊 Registros de hoy")
-        if registros and isinstance(registros, list):
-            for r in registros:
-                tipo_bg = "#0a1a0a" if r["tipo"]=="entrada" else "#1a0a0a"
-                ico = "✅" if r["tipo"]=="entrada" else "🏁"
-                st.markdown(f"""<div style="background:{tipo_bg};border-radius:8px;padding:0.7rem 1rem;margin-bottom:0.3rem;">
-                    {ico} <b>{r.get('colaborador_nombre','')}</b> · {r.get('fecha','')[:16]}<br>
-                    📍 {r.get('proyecto','')} · 📋 {r.get('tarea','')}
-                </div>""", unsafe_allow_html=True)
-        else:
-            st.info("No hay registros para hoy.")
-        activos = [r for r in (registros or []) if r["tipo"]=="entrada" and not r.get("salida")]
-        st.metric("En campo ahora", len(activos))
 
-    with col_r:
-        st.markdown("### ✍️ Registro manual")
-        m_col = st.text_input("Colaborador", value=nombre)
-        m_tip = st.selectbox("Tipo", ["entrada","salida"])
-        m_pro = st.text_input("Proyecto")
-        m_tar = st.text_input("Tarea")
-        if st.button("💾 Registrar", use_container_width=True, type="primary"):
+    # ── Componente de geolocalización móvil ──────────────────────────────────
+    geo_html = """
+    <style>
+    .geo-btn{background:#cc0000;color:#fff;border:none;border-radius:12px;padding:1rem 1.5rem;
+        font-size:1.1rem;font-weight:700;width:100%;cursor:pointer;margin:0.3rem 0;
+        display:flex;align-items:center;justify-content:center;gap:0.5rem;touch-action:manipulation;}
+    .geo-btn:active{background:#990000;}
+    .geo-salida{background:#1a1a1a;border:2px solid #cc0000;}
+    .geo-status{background:#0a0a0a;border:1px solid #333;border-radius:10px;
+        padding:0.8rem;margin:0.5rem 0;color:#ccc;font-size:0.85rem;min-height:60px;}
+    .geo-coords{color:#4ade80;font-size:0.8rem;font-family:monospace;}
+    #mapa{width:100%;height:220px;border-radius:10px;border:1px solid #cc0000;margin:0.5rem 0;}
+    </style>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <div id="geo-status" class="geo-status">📍 Presiona un botón para registrar tu ubicación...</div>
+    <div id="mapa"></div>
+    <div id="geo-coords" class="geo-coords"></div>
+
+    <input type="text" id="geo-lat" style="display:none"/>
+    <input type="text" id="geo-lng" style="display:none"/>
+
+    <script>
+    var mapa = L.map('mapa').setView([4.711, -74.0721], 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        {attribution:'© OpenStreetMap'}).addTo(mapa);
+    var marker = null;
+
+    function obtenerUbicacion(tipo) {
+        document.getElementById('geo-status').innerHTML = '⏳ Obteniendo ubicación GPS...';
+        if (!navigator.geolocation) {
+            document.getElementById('geo-status').innerHTML = '❌ Tu dispositivo no soporta geolocalización.';
+            return;
+        }
+        navigator.geolocation.getCurrentPosition(function(pos) {
+            var lat = pos.coords.latitude.toFixed(6);
+            var lng = pos.coords.longitude.toFixed(6);
+            var acc = Math.round(pos.coords.accuracy);
+            document.getElementById('geo-lat').value = lat;
+            document.getElementById('geo-lng').value = lng;
+            document.getElementById('geo-coords').innerHTML = '📌 Lat: ' + lat + ' | Lng: ' + lng + ' | Precisión: ' + acc + 'm';
+            var ico = tipo === 'entrada' ? '✅' : '🏁';
+            document.getElementById('geo-status').innerHTML = ico + ' <b>Ubicación capturada</b><br>Lat: ' + lat + ' Lng: ' + lng + '<br>Precisión: ' + acc + 'm';
+            if (marker) mapa.removeLayer(marker);
+            marker = L.marker([lat, lng]).addTo(mapa)
+                .bindPopup(ico + ' ' + tipo.toUpperCase() + '<br>' + new Date().toLocaleTimeString())
+                .openPopup();
+            mapa.setView([lat, lng], 15);
+            // Enviar al padre
+            window.parent.postMessage({type: 'geo', lat: lat, lng: lng, tipo: tipo}, '*');
+        }, function(err) {
+            document.getElementById('geo-status').innerHTML = '⚠️ Error: ' + err.message + '<br>Activa el GPS y permite el acceso.';
+        }, {enableHighAccuracy: true, timeout: 15000, maximumAge: 0});
+    }
+    </script>
+
+    <button class="geo-btn" onclick="obtenerUbicacion('entrada')">✅ Registrar ENTRADA con GPS</button>
+    <button class="geo-btn geo-salida" onclick="obtenerUbicacion('salida')">🏁 Registrar SALIDA con GPS</button>
+    """
+    st.components.v1.html(geo_html, height=480, scrolling=False)
+
+    st.markdown('<hr style="border-color:#1a0000;margin:1rem 0;">', unsafe_allow_html=True)
+
+    # ── Registro manual con formulario móvil optimizado ───────────────────────
+    st.markdown("### ✍️ Completar registro")
+    with st.form("form_asistencia", clear_on_submit=True):
+        m_col = st.text_input("👤 Colaborador", value=nombre)
+        m_tip = st.selectbox("📋 Tipo", ["entrada","salida"])
+        m_pro = st.text_input("📍 Proyecto / Cliente")
+        m_tar = st.text_input("🔧 Tarea realizada")
+        m_lat = st.text_input("🌐 Latitud (del mapa)", placeholder="Opcional — se llena con GPS")
+        m_lng = st.text_input("🌐 Longitud (del mapa)", placeholder="Opcional — se llena con GPS")
+        submitted = st.form_submit_button("💾 Guardar registro", use_container_width=True, type="primary")
+        if submitted:
+            ubicacion = f"{m_lat},{m_lng}" if m_lat and m_lng else ""
             data = {"colaborador_id":u["id"],"colaborador_nombre":m_col,
-                "tipo":m_tip,"proyecto":m_pro,"tarea":m_tar}
+                "tipo":m_tip,"proyecto":m_pro,"tarea":m_tar,"ubicacion":ubicacion}
             supa("asistencia","POST",data)
             emoji = "✅" if m_tip=="entrada" else "🏁"
-            telegram(f"{emoji} <b>{m_col}</b> registró {m_tip}\n📍 {m_pro}\n📋 {m_tar}")
-            st.success("✅ Registrado"); st.rerun()
+            geo_txt = f"\n📌 GPS: {ubicacion}" if ubicacion else ""
+            telegram(f"{emoji} <b>{m_col}</b> registró {m_tip}\n📍 {m_pro}\n📋 {m_tar}{geo_txt}")
+            st.success("✅ Registrado y notificado"); st.rerun()
+
+    st.markdown('<hr style="border-color:#1a0000;margin:1rem 0;">', unsafe_allow_html=True)
+
+    # ── Mapa admin con todos los técnicos ─────────────────────────────────────
+    if rol == "admin":
+        st.markdown("### 🗺️ Mapa de técnicos en campo")
+        hoy = datetime.now().strftime("%Y-%m-%d")
+        registros = supa("asistencia", filtro=f"?fecha=gte.{hoy}T00:00:00&order=fecha.desc")
+        activos = [r for r in (registros or []) if r.get("ubicacion") and r["tipo"]=="entrada" and not r.get("salida")]
+
+        if activos:
+            markers_js = ""
+            for r in activos:
+                try:
+                    lat, lng = r["ubicacion"].split(",")
+                    markers_js += f"""L.marker([{lat},{lng}]).addTo(mapa_admin)
+                        .bindPopup('<b>{r.get("colaborador_nombre","")}</b><br>📍 {r.get("proyecto","")}<br>📋 {r.get("tarea","")}<br>🕐 {r.get("fecha","")[:16]}').openPopup();"""
+                except: pass
+
+            mapa_admin_html = f"""
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+            <div id="mapa_admin" style="width:100%;height:350px;border-radius:10px;border:1px solid #cc0000;"></div>
+            <script>
+            var mapa_admin = L.map('mapa_admin').setView([4.711,-74.0721],11);
+            L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png').addTo(mapa_admin);
+            {markers_js}
+            </script>"""
+            st.components.v1.html(mapa_admin_html, height=370)
+            st.metric("Técnicos en campo ahora", len(activos))
+            for r in activos:
+                st.markdown(f"🟢 **{r.get('colaborador_nombre','')}** — {r.get('proyecto','')} — {r.get('fecha','')[:16]}")
+        else:
+            mapa_vacio = """
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+            <div id="mv" style="width:100%;height:300px;border-radius:10px;border:1px solid #333;"></div>
+            <script>var mv=L.map('mv').setView([4.711,-74.0721],11);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mv);</script>"""
+            st.components.v1.html(mapa_vacio, height=320)
+            st.info("No hay técnicos con GPS activo en este momento.")
+
+        st.markdown("### 📊 Todos los registros de hoy")
+        if registros and isinstance(registros, list):
+            for r in registros:
+                bg = "#0a1a0a" if r["tipo"]=="entrada" else "#1a0a0a"
+                ico = "✅" if r["tipo"]=="entrada" else "🏁"
+                geo = f" · 📌 GPS" if r.get("ubicacion") else ""
+                st.markdown(f"""<div style="background:{bg};border-radius:8px;padding:0.7rem 1rem;margin-bottom:0.3rem;">
+                    {ico} <b>{r.get('colaborador_nombre','')}</b> · {r.get('fecha','')[:16]}{geo}<br>
+                    📍 {r.get('proyecto','')} · 📋 {r.get('tarea','')}
+                </div>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CLIENTES
