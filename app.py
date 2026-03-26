@@ -235,28 +235,51 @@ pre{{white-space:pre-wrap;line-height:1.6;}}
 
 # ── Micrófono HTML5 nativo ────────────────────────────────────────────────────
 def campo_voz_html5(label, key, height=100, placeholder="Escribe o usa el micrófono..."):
-    """Campo de texto con soporte de voz via streamlit_mic_recorder"""
+    """Campo de texto con micrófono — panel flotante con botón Añadir"""
     if key not in st.session_state: st.session_state[key]=""
+    if f"voz_temp_{key}" not in st.session_state: st.session_state[f"voz_temp_{key}"]=""
+
     try:
         from streamlit_mic_recorder import speech_to_text
-        c1,c2=st.columns([1,5])
+        c1,c2,c3=st.columns([1,3,1])
         with c1:
-            tv=speech_to_text(language="es",start_prompt="🎤",stop_prompt="⏹️",
+            tv=speech_to_text(language="es",start_prompt="🎤 Dictar",stop_prompt="⏹️ Detener",
                 just_once=True,use_container_width=True,key=f"mic_{key}")
         with c2:
-            st.caption(f"Presiona 🎤 para dictar · Chrome recomendado")
+            st.caption("🎤 Chrome recomendado · El texto aparece abajo · Presiona Añadir para insertar")
         if tv:
-            st.session_state[key]=(st.session_state.get(key,"")+" "+tv).strip()
+            st.session_state[f"voz_temp_{key}"]=tv
             st.rerun()
+
+        # Panel de texto dictado con botón Añadir
+        texto_dictado=st.session_state.get(f"voz_temp_{key}","")
+        if texto_dictado:
+            with c3: pass
+            st.markdown(f"""<div style="background:#0a1a00;border:1px solid #4ade80;border-radius:8px;
+                padding:0.6rem 1rem;margin:0.3rem 0;color:#4ade80;font-size:0.9rem;">
+                🎙️ <b>Texto dictado:</b> {texto_dictado}</div>""", unsafe_allow_html=True)
+            ca,cb=st.columns([1,3])
+            with ca:
+                if st.button("➕ Añadir",key=f"add_{key}",use_container_width=True,type="primary"):
+                    actual=st.session_state.get(key,"")
+                    st.session_state[key]=(actual+" "+texto_dictado).strip()
+                    st.session_state[f"voz_temp_{key}"]=""
+                    st.rerun()
+            with cb:
+                if st.button("🗑️ Descartar",key=f"disc_{key}",use_container_width=True):
+                    st.session_state[f"voz_temp_{key}"]=""
+                    st.rerun()
     except:
-        pass
+        st.caption("💡 Instala streamlit-mic-recorder para usar el micrófono")
+
     val=st.text_area(label,value=st.session_state.get(key,""),
         height=height,key=f"ta_{key}",placeholder=placeholder)
-    st.session_state[key]=val
-    return val
+    if val != st.session_state.get(key,""):
+        st.session_state[key]=val
+    return st.session_state.get(key,"")
 
 # ── Config página ─────────────────────────────────────────────────────────────
-st.set_page_config(page_title="JandrexT",page_icon="🧠",
+st.set_page_config(page_title="JandrexT | Plataforma v14",page_icon="🧠",
     layout="wide",initial_sidebar_state="expanded")
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
@@ -274,15 +297,18 @@ html,body,[class*="css"]{{font-family:'Inter','Helvetica Neue',Arial,sans-serif;
 .login-wrap{{max-width:480px;margin:2.5rem auto;background:#0f0000;
     border:1px solid #cc0000;border-radius:16px;padding:2.5rem;}}
 .logo-login-j{{font-family:'Disclaimer-Classic',sans-serif;color:#cc0000;
-    font-size:5.5rem;font-weight:900;letter-spacing:8px;line-height:1.1;display:inline;}}
+    font-size:6.5rem;font-weight:900;letter-spacing:10px;line-height:1.1;display:inline;
+    text-shadow:-1px -1px 0 #fff,1px -1px 0 #fff,-1px 1px 0 #fff,1px 1px 0 #fff;}}
 .logo-login-mid{{font-family:'Disclaimer-Classic',sans-serif;color:#fff;
-    font-size:3.2rem;font-weight:900;letter-spacing:8px;line-height:1.1;display:inline;}}
+    font-size:3.8rem;font-weight:900;letter-spacing:10px;line-height:1.1;display:inline;
+    text-shadow:-1px -1px 0 #cc0000,1px -1px 0 #cc0000,-1px 1px 0 #cc0000,1px 1px 0 #cc0000;}}
 .logo-login-t{{font-family:'Disclaimer-Classic',sans-serif;color:#cc0000;
-    font-size:5.5rem;font-weight:900;letter-spacing:8px;line-height:1.1;display:inline;}}
-.logo-login-sub{{font-family:'Inter',sans-serif;color:#555;font-size:0.8rem;
-    letter-spacing:5px;text-transform:uppercase;margin:0.5rem 0 0;}}
+    font-size:6.5rem;font-weight:900;letter-spacing:10px;line-height:1.1;display:inline;
+    text-shadow:-1px -1px 0 #fff,1px -1px 0 #fff,-1px 1px 0 #fff,1px 1px 0 #fff;}}
+.logo-login-sub{{font-family:'Inter',sans-serif;color:#666;font-size:0.9rem;
+    letter-spacing:5px;text-transform:uppercase;margin:0.6rem 0 0;}}
 .logo-login-lema{{font-family:'JennaSue',sans-serif;color:#cc4444;
-    font-size:1.3rem;margin:0.3rem 0;}}
+    font-size:1.6rem;margin:0.4rem 0;}}
 
 /* HEADER */
 .header-inst{{background:linear-gradient(135deg,#0a0000,#1a0000);border-radius:12px;
@@ -290,17 +316,17 @@ html,body,[class*="css"]{{font-family:'Inter','Helvetica Neue',Arial,sans-serif;
     display:flex;align-items:center;justify-content:space-between;gap:1rem;}}
 .h-logo{{height:70px;width:auto;flex-shrink:0;}}
 .h-brand{{flex:1;}}
-.h-name{{font-family:'Disclaimer-Classic',sans-serif;color:#fff;font-size:2.4rem;
-    font-weight:900;letter-spacing:6px;margin:0;line-height:1.1;}}
-.h-acc{{color:#cc0000;}}
-.h-lema{{font-family:'JennaSue',sans-serif;color:#cc4444;font-size:1.1rem;margin:0.1rem 0;}}
+.h-name{{font-family:'Disclaimer-Classic',sans-serif;color:#fff;font-size:2.8rem;
+    font-weight:900;letter-spacing:7px;margin:0;line-height:1.1;}}
+.h-acc{{color:#cc0000;text-shadow:-1px -1px 0 #fff,1px 1px 0 #fff;}}
+.h-lema{{font-family:'JennaSue',sans-serif;color:#cc4444;font-size:1.3rem;margin:0.1rem 0;}}
 .h-sub{{font-family:'Inter',sans-serif;color:#444;font-size:0.65rem;
     letter-spacing:3px;text-transform:uppercase;margin:0;}}
 .h-user{{text-align:right;flex-shrink:0;}}
-.h-saludo{{font-family:'JennaSue',sans-serif;color:#cc6666;font-size:0.95rem;}}
-.h-nombre{{color:#fff;font-weight:700;font-size:1rem;}}
-.h-rol{{color:#cc0000;font-size:0.7rem;letter-spacing:1px;text-transform:uppercase;}}
-.h-fecha{{color:#444;font-size:0.72rem;}}
+.h-saludo{{font-family:'JennaSue',sans-serif;color:#cc6666;font-size:1.2rem;}}
+.h-nombre{{color:#fff;font-weight:700;font-size:1.1rem;}}
+.h-rol{{color:#cc0000;font-size:0.78rem;letter-spacing:1px;text-transform:uppercase;}}
+.h-fecha{{color:#555;font-size:0.78rem;}}
 
 /* SIDEBAR */
 .sb-wrap{{background:#0f0000;border:1px solid #cc0000;border-radius:10px;
@@ -471,7 +497,7 @@ st.markdown(f"""<div class="header-inst">
     <div class="h-brand">
         <p class="h-name">Jandre<span class="h-acc">x</span>T</p>
         <p class="h-lema">Apasionados por el buen servicio</p>
-        <p class="h-sub">Soluciones Integrales · Plataforma v13.0</p>
+        <p class="h-sub">Soluciones Integrales · Plataforma v14.0</p>
     </div>
     <div class="h-user">
         <div class="h-saludo">{saludo},</div>
@@ -981,6 +1007,9 @@ elif sec=="aliados":
         a_rf=ali_field("responsabilidad_fiscal","Responsabilidad Fiscal","R-99-PN")
         a_reg=ali_field("regimen_fiscal","Régimen Fiscal","49")
         a_not=st.text_area("Notas adicionales",key="ali_notas",height=60)
+        a_hor=campo_voz_html5("Horarios de atención","ali_horarios",height=70,
+            placeholder="Ej: Lun-Vie 8am-12pm / 2pm-6pm · Sáb 8am-12pm · Dom Cerrado")
+        st.caption("💡 También puedes subir una foto del horario y extraer los datos automáticamente")
 
         if st.button("💾 Guardar Aliado",type="primary",use_container_width=True):
             rs=st.session_state.get("ali_razon_social","")
@@ -998,7 +1027,8 @@ elif sec=="aliados":
                     "cargo_contacto":st.session_state.get("ali_cargo_contacto",""),
                     "responsabilidad_fiscal":st.session_state.get("ali_responsabilidad_fiscal",""),
                     "regimen_fiscal":st.session_state.get("ali_regimen_fiscal",""),
-                    "notas":a_not})
+                    "notas":a_not,
+                    "horarios":st.session_state.get("ali_horarios","")})
                 if res:
                     for k in list(st.session_state.keys()):
                         if k.startswith("ali_"): del st.session_state[k]
@@ -1020,6 +1050,7 @@ elif sec=="aliados":
                 c2.markdown(f"**Contacto:** {a.get('contacto','')} — {a.get('cargo_contacto','')}")
                 c2.markdown(f"**NIT:** {a.get('nit','')} | **Rég:** {a.get('regimen_fiscal','')}")
                 if a.get("notas"): st.caption(f"📝 {a['notas']}")
+                if a.get("horarios"): st.info(f"🕐 Horarios: {a['horarios']}")
                 if puede_borrar(u):
                     if st.button("🗑️ Eliminar",key=f"da_{a['id']}"):
                         supa("clientes","DELETE",filtro=f"?id=eq.{a['id']}"); st.rerun()
@@ -1198,10 +1229,26 @@ elif sec=="biblioteca" and tiene_modulo(u,"biblioteca"):
         bval=st.session_state.get("bib_bus","")
         filtrados=[m for m in msgs if not bval or bval.lower() in m.get("pregunta","").lower() or bval.lower() in m.get("sintesis","").lower()]
         st.metric("Consultas",len(filtrados))
+        proyectos_bib=supa("proyectos",filtro="?order=nombre.asc") or []
+        proy_bib_nombres=["Sin proyecto"]+[p["nombre"] for p in proyectos_bib]
         for m in filtrados:
             with st.expander(f"📌 {m.get('pregunta','')[:60]}... | {m.get('creado_en','')[:10]}"):
                 st.markdown(m.get("sintesis",""))
                 st.code(m.get("sintesis",""),language=None)
+                # Mover a proyecto
+                cb1,cb2=st.columns([3,1])
+                with cb1:
+                    proy_dest=st.selectbox("📁 Mover a proyecto",proy_bib_nombres,key=f"pbib_{m['id']}")
+                with cb2:
+                    if st.button("📁 Mover",key=f"mbib_{m['id']}",use_container_width=True):
+                        pid_bib=next((p["id"] for p in proyectos_bib if p["nombre"]==proy_dest),None)
+                        if pid_bib:
+                            # Crear chat en el proyecto con esta consulta
+                            nuevo_chat=supa("chats","POST",{"titulo":m.get("pregunta","")[:50],
+                                "proyecto_id":pid_bib,"usuario_id":u["id"]})
+                            if nuevo_chat and isinstance(nuevo_chat,list):
+                                supa("mensajes_chat","PATCH",{"chat_id":nuevo_chat[0]["id"]},f"?id=eq.{m['id']}")
+                                st.success(f"✅ Movido a {proy_dest}"); st.rerun()
                 if puede_borrar(u):
                     if st.button("🗑️",key=f"db_{m['id']}"): supa("mensajes_chat","DELETE",filtro=f"?id=eq.{m['id']}"); st.rerun()
     with tab2:
@@ -1376,15 +1423,12 @@ elif sec=="config" and rol=="admin":
         st.markdown("### 🤖 Telegram")
         tg_chat=os.getenv("TELEGRAM_CHAT_ID_ADMIN","No configurado")
         st.info(f"**Bot:** @JandrexTAsistencia_bot | **Chat ID:** {tg_chat}")
-        token_debug=os.getenv("TELEGRAM_BOT_TOKEN","VACIO")
-        chat_debug=os.getenv("TELEGRAM_CHAT_ID_ADMIN","VACIO")
-        st.caption(f"Token termina en: ...{token_debug[-10:] if len(token_debug)>10 else token_debug} | Chat ID: {chat_debug}")
         if st.button("📱 Enviar mensaje de prueba",type="primary"):
-            resultado=telegram(f"✅ <b>Prueba JandrexT v13</b>\nPlataforma funcionando.\n{fecha_str()}")
+            resultado=telegram(f"✅ <b>Prueba JandrexT v14</b>\nPlataforma funcionando correctamente.\n{fecha_str()}")
             ok = resultado[0] if isinstance(resultado, tuple) else resultado
             msg_err = resultado[1] if isinstance(resultado, tuple) else ""
             if ok: st.success("✅ Mensaje enviado correctamente")
-            else: st.error(f"❌ Error: '{msg_err}'")
+            else: st.error(f"❌ Error: {msg_err}")
 
     with tab3:
         st.markdown("### 🧪 Limpieza de datos de prueba")
@@ -1425,12 +1469,12 @@ elif sec=="config" and rol=="admin":
         c1.metric("Aliados",total_a)
         c2.metric("Tareas pendientes",total_t)
         c3.metric("Manuales",total_m)
-        st.caption(f"Última actualización: {fecha_str()} | Plataforma v13.0 | JandrexT Soluciones Integrales")
+        st.caption(f"Última actualización: {fecha_str()} | Plataforma v14.0 | JandrexT Soluciones Integrales")
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown(f"""<div class="footer-inst">
     <span class="footer-acc">JandrexT</span> Soluciones Integrales &nbsp;·&nbsp;
     Director de Proyectos: <span class="footer-acc">Andrés Tapiero</span> &nbsp;·&nbsp;
-    Plataforma v13.0 &nbsp;·&nbsp; 🔒 Sistema Interno<br>
+    Plataforma v14.0 &nbsp;·&nbsp; 🔒 Sistema Interno<br>
     <span class="footer-lema-j">Apasionados por el buen servicio</span>
 </div>""", unsafe_allow_html=True)
