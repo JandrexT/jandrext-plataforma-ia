@@ -1376,11 +1376,15 @@ elif sec=="config" and rol=="admin":
         st.markdown("### 🤖 Telegram")
         tg_chat=os.getenv("TELEGRAM_CHAT_ID_ADMIN","No configurado")
         st.info(f"**Bot:** @JandrexTAsistencia_bot | **Chat ID:** {tg_chat}")
+        token_debug=os.getenv("TELEGRAM_BOT_TOKEN","VACIO")
+        chat_debug=os.getenv("TELEGRAM_CHAT_ID_ADMIN","VACIO")
+        st.caption(f"Token termina en: ...{token_debug[-10:] if len(token_debug)>10 else token_debug} | Chat ID: {chat_debug}")
         if st.button("📱 Enviar mensaje de prueba",type="primary"):
-            ok,_=telegram(f"✅ <b>Prueba JandrexT v13</b>\nPlataforma funcionando correctamente.\n{fecha_str()}")
-            ok, msg_err = ok if isinstance(ok, tuple) else (ok, "")
+            resultado=telegram(f"✅ <b>Prueba JandrexT v13</b>\nPlataforma funcionando.\n{fecha_str()}")
+            ok = resultado[0] if isinstance(resultado, tuple) else resultado
+            msg_err = resultado[1] if isinstance(resultado, tuple) else ""
             if ok: st.success("✅ Mensaje enviado correctamente")
-            else: st.error(f"❌ Error: {msg_err}")
+            else: st.error(f"❌ Error: '{msg_err}'")
 
     with tab3:
         st.markdown("### 🧪 Limpieza de datos de prueba")
