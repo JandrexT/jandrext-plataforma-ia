@@ -235,48 +235,61 @@ pre{{white-space:pre-wrap;line-height:1.6;}}
 
 # ── Micrófono HTML5 nativo ────────────────────────────────────────────────────
 def campo_voz_html5(label, key, height=100, placeholder="Escribe o usa el micrófono..."):
-    """Campo de texto con micrófono — panel flotante con botón Añadir"""
+    """Campo de texto simple — el micrófono global maneja la voz"""
     if key not in st.session_state: st.session_state[key]=""
-    if f"voz_temp_{key}" not in st.session_state: st.session_state[f"voz_temp_{key}"]=""
-
-    try:
-        from streamlit_mic_recorder import speech_to_text
-        c1,c2,c3=st.columns([1,3,1])
-        with c1:
-            tv=speech_to_text(language="es",start_prompt="🎤 Dictar",stop_prompt="⏹️ Detener",
-                just_once=True,use_container_width=True,key=f"mic_{key}")
-        with c2:
-            st.caption("🎤 Chrome recomendado · El texto aparece abajo · Presiona Añadir para insertar")
-        if tv:
-            st.session_state[f"voz_temp_{key}"]=tv
-            st.rerun()
-
-        # Panel de texto dictado con botón Añadir
-        texto_dictado=st.session_state.get(f"voz_temp_{key}","")
-        if texto_dictado:
-            with c3: pass
-            st.markdown(f"""<div style="background:#0a1a00;border:1px solid #4ade80;border-radius:8px;
-                padding:0.6rem 1rem;margin:0.3rem 0;color:#4ade80;font-size:0.9rem;">
-                🎙️ <b>Texto dictado:</b> {texto_dictado}</div>""", unsafe_allow_html=True)
-            ca,cb=st.columns([1,3])
-            with ca:
-                if st.button("➕ Añadir",key=f"add_{key}",use_container_width=True,type="primary"):
-                    actual=st.session_state.get(key,"")
-                    st.session_state[key]=(actual+" "+texto_dictado).strip()
-                    st.session_state[f"voz_temp_{key}"]=""
-                    st.rerun()
-            with cb:
-                if st.button("🗑️ Descartar",key=f"disc_{key}",use_container_width=True):
-                    st.session_state[f"voz_temp_{key}"]=""
-                    st.rerun()
-    except:
-        st.caption("💡 Instala streamlit-mic-recorder para usar el micrófono")
-
     val=st.text_area(label,value=st.session_state.get(key,""),
         height=height,key=f"ta_{key}",placeholder=placeholder)
-    if val != st.session_state.get(key,""):
-        st.session_state[key]=val
-    return st.session_state.get(key,"")
+    st.session_state[key]=val
+    return val
+
+def panel_voz_global(campos_disponibles, seccion_key):
+    """Panel de micrófono global — un solo mic por sección, envía al campo elegido"""
+    if f"voz_global_{seccion_key}" not in st.session_state:
+        st.session_state[f"voz_global_{seccion_key}"]=""
+
+    with st.expander("🎤 Dictar información por voz", expanded=False):
+        st.caption("Habla, luego elige el campo y presiona Añadir. Funciona en Chrome.")
+        try:
+            from streamlit_mic_recorder import speech_to_text
+            tv=speech_to_text(language="es",
+                start_prompt="🎤 Iniciar grabación",
+                stop_prompt="⏹️ Detener grabación",
+                just_once=True,
+                use_container_width=True,
+                key=f"mic_global_{seccion_key}")
+            if tv:
+                st.session_state[f"voz_global_{seccion_key}"]=tv
+                st.rerun()
+        except:
+            st.warning("⚠️ Instala streamlit-mic-recorder")
+            return
+
+        texto=st.session_state.get(f"voz_global_{seccion_key}","")
+        if texto:
+            st.markdown(f"""<div style="background:#0a1a00;border:1px solid #4ade80;
+                border-radius:8px;padding:0.8rem 1rem;margin:0.4rem 0;color:#4ade80;font-size:0.9rem;">
+                🎙️ <b>Texto captado:</b><br>{texto}</div>""", unsafe_allow_html=True)
+
+            campo_sel=st.selectbox("¿A qué campo añadir?",
+                list(campos_disponibles.keys()),
+                key=f"campo_sel_{seccion_key}")
+
+            c1,c2=st.columns(2)
+            with c1:
+                if st.button("➕ Añadir al campo",type="primary",
+                    use_container_width=True,key=f"add_voz_{seccion_key}"):
+                    campo_key=campos_disponibles[campo_sel]
+                    actual=st.session_state.get(campo_key,"")
+                    st.session_state[campo_key]=(actual+" "+texto).strip()
+                    st.session_state[f"voz_global_{seccion_key}"]=""
+                    st.rerun()
+            with c2:
+                if st.button("🗑️ Limpiar",use_container_width=True,
+                    key=f"clear_voz_{seccion_key}"):
+                    st.session_state[f"voz_global_{seccion_key}"]=""
+                    st.rerun()
+        else:
+            st.info("Presiona el botón y habla claramente en Chrome.")
 
 # ── Config página ─────────────────────────────────────────────────────────────
 st.set_page_config(page_title="JandrexT | Plataforma v14",page_icon="🧠",
@@ -749,7 +762,14 @@ elif sec=="agenda":
     with col_f:
         if rol=="admin":
             st.markdown("### ➕ Nueva tarea")
-            a_t=campo_voz_html5("la tarea","ag_tarea",height=80,placeholder="Describe la tarea...")
+            panel_voz_global({
+                "Tarea": "ag_tarea",
+                "Descripción": "ag_desc",
+                "Estado inicial": "ag_ei",
+                "Recomendaciones": "ag_recom",
+                "Lección aprendida": "ag_leccion"
+            }, "agenda")
+            a_t=campo_voz_html5("Tarea *","ag_tarea",height=80,placeholder="Describe la tarea...")
             a_al=st.selectbox("Aliado / Sitio *",aliados_nombres)
             a_li=st.selectbox("Línea de servicio",LINEAS)
             a_pr=st.selectbox("Prioridad",["🔴 Urgente (36h)","🟡 Normal (60h)","🟢 Puede esperar (90h)"])
@@ -906,7 +926,12 @@ elif sec=="asistencia":
 
     inf_aliado=st.selectbox("Proyecto / Aliado",aliados_nombres,key="inf_ali")
     inf_serv=st.selectbox("Tipo de servicio",LINEAS,key="inf_serv")
-    inf_desc=campo_voz_html5("el trabajo realizado","inf_desc",height=110,
+    panel_voz_global({
+        "Trabajo realizado": "inf_desc",
+        "Materiales utilizados": "inf_elem",
+        "Pendientes": "inf_pend"
+    }, "asistencia")
+    inf_desc=campo_voz_html5("Descripción del trabajo","inf_desc",height=110,
         placeholder="Describe qué encontraste, qué hiciste y qué quedó...")
     inf_elem=campo_voz_html5("los materiales utilizados","inf_elem",height=80,
         placeholder="Ej: 2 tornillos M8, 1 hidráulico Speedy M25...")
@@ -1072,7 +1097,10 @@ elif sec=="documentos" and tiene_modulo(u,"documentos"):
     doc_aliado=c1.selectbox("Aliado",aliados_nombres)
     doc_proy=c2.selectbox("Proyecto",proyectos_nombres)
     doc_linea=st.selectbox("Línea de servicio",LINEAS)
-    doc_contenido=campo_voz_html5("el contenido del documento","doc_cont",height=150,
+    panel_voz_global({
+        "Contenido del documento": "doc_cont"
+    }, "documentos")
+    doc_contenido=campo_voz_html5("Contenido del documento","doc_cont",height=150,
         placeholder="Describe equipos, actividades, valores...")
     c1,c2=st.columns(2)
     doc_valor=c1.number_input("Valor total (COP)",min_value=0,step=50000)
@@ -1146,7 +1174,10 @@ elif sec=="manuales" and tiene_modulo(u,"manuales"):
             "Guía de Configuración y Contraseñas","Plan de Mantenimiento Preventivo",
             "Manual de Operación Diaria","Guía de Acceso Remoto"])
         m_lin=st.selectbox("Línea de servicio",LINEAS)
-        m_det=campo_voz_html5("los detalles","man_det",height=130,
+        panel_voz_global({
+            "Detalles del sistema": "man_det"
+        }, "manuales")
+        m_det=campo_voz_html5("Detalles específicos","man_det",height=130,
             placeholder="IP, contraseñas, equipos instalados...")
         m_cli=st.selectbox("Tipo de destinatario",["copropiedad","empresa","natural","administracion"])
         if st.button("📖 Generar manual",type="primary",use_container_width=True):
@@ -1189,12 +1220,15 @@ elif sec=="ventas" and tiene_modulo(u,"ventas"):
     st.markdown("## 💼 Asistente de Ventas")
     aliados_list=supa("clientes",filtro="?order=nombre.asc") or []
     aliados_nombres=["Nuevo aliado"]+[a["nombre"] for a in aliados_list]
+    panel_voz_global({
+        "Necesidad del aliado": "ven_nec"
+    }, "ventas")
     c1,c2=st.columns(2)
     with c1:
         v_ali=st.selectbox("Aliado",aliados_nombres)
         aliado_data=next((a for a in aliados_list if a["nombre"]==v_ali),{})
         v_li=st.selectbox("Línea de servicio",LINEAS)
-        v_ne=campo_voz_html5("la necesidad del aliado","ven_nec",height=100)
+        v_ne=campo_voz_html5("Necesidad del aliado","ven_nec",height=100)
     with c2:
         v_ti=st.selectbox("Tipo",["copropiedad","empresa","natural","administracion"])
         v_pr=st.selectbox("Presupuesto",["No definido","< $1M","$1M-$5M","$5M-$15M","$15M-$50M","> $50M"])
