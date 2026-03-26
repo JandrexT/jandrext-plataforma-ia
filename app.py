@@ -243,6 +243,162 @@ def campo_voz_html5(label, key, height=100, placeholder="Escribe o usa el micró
     return val
 
 def panel_voz_global(campos_disponibles, seccion_key):
+    """Panel de micrófono usando Web Speech API nativa del navegador"""
+    if f"voz_{seccion_key}" not in st.session_state:
+        st.session_state[f"voz_{seccion_key}"] = ""
+
+    campos_lista = list(campos_disponibles.keys())
+    campos_str = "|".join(campos_lista)
+
+    html_mic = f"""
+<div style="background:#0a0f00;border:1px solid #cc0000;border-radius:10px;padding:1rem;margin-bottom:8px;">
+  <div style="color:#cc0000;font-size:0.75rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">
+    DICTAR POR VOZ
+  </div>
+  <div style="display:flex;gap:8px;margin-bottom:8px;">
+    <button id="btnStart_{seccion_key}"
+      onclick="startRec_{seccion_key}()"
+      style="flex:1;background:#cc0000;color:#fff;border:none;border-radius:8px;
+      padding:10px;font-size:14px;font-weight:700;cursor:pointer;">
+      Iniciar grabacion
+    </button>
+    <button id="btnStop_{seccion_key}"
+      onclick="stopRec_{seccion_key}()"
+      disabled
+      style="flex:1;background:#333;color:#888;border:none;border-radius:8px;
+      padding:10px;font-size:14px;font-weight:700;cursor:not-allowed;">
+      Detener
+    </button>
+  </div>
+  <div id="status_{seccion_key}"
+    style="color:#888;font-size:12px;margin-bottom:6px;">
+    Listo para grabar en Chrome
+  </div>
+  <div id="preview_{seccion_key}"
+    style="background:#0a1a00;border:1px solid #166534;border-radius:6px;
+    padding:8px;color:#4ade80;font-size:13px;min-height:36px;margin-bottom:8px;
+    display:none;word-wrap:break-word;">
+  </div>
+  <div style="display:flex;gap:8px;align-items:center;">
+    <select id="campoSel_{seccion_key}"
+      style="flex:1;background:#1a0000;color:#ccc;border:1px solid #3a0000;
+      border-radius:6px;padding:8px;font-size:13px;">
+      {chr(10).join(f'<option value="{c}">{c}</option>' for c in campos_lista)}
+    </select>
+    <button onclick="enviarTexto_{seccion_key}()"
+      style="background:#166534;color:#fff;border:none;border-radius:6px;
+      padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">
+      Insertar
+    </button>
+    <button onclick="limpiarTexto_{seccion_key}()"
+      style="background:#333;color:#888;border:none;border-radius:6px;
+      padding:8px 10px;font-size:13px;cursor:pointer;">
+      X
+    </button>
+  </div>
+</div>
+
+<script>
+(function() {{
+  var rec_{seccion_key} = null;
+  var texto_{seccion_key} = '';
+  var campos_map = {{}};
+  "{campos_str}".split("|").forEach(function(c) {{ campos_map[c] = c; }});
+
+  window.startRec_{seccion_key} = function() {{
+    if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {{
+      document.getElementById('status_{seccion_key}').innerHTML =
+        '<span style="color:#f87171">Usa Google Chrome para el microfono</span>';
+      return;
+    }}
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    rec_{seccion_key} = new SR();
+    rec_{seccion_key}.lang = 'es-CO';
+    rec_{seccion_key}.continuous = true;
+    rec_{seccion_key}.interimResults = true;
+    rec_{seccion_key}.start();
+
+    document.getElementById('btnStart_{seccion_key}').disabled = true;
+    document.getElementById('btnStart_{seccion_key}').style.background = '#555';
+    document.getElementById('btnStop_{seccion_key}').disabled = false;
+    document.getElementById('btnStop_{seccion_key}').style.background = '#cc0000';
+    document.getElementById('btnStop_{seccion_key}').style.color = '#fff';
+    document.getElementById('btnStop_{seccion_key}').style.cursor = 'pointer';
+    document.getElementById('status_{seccion_key}').innerHTML =
+      '<span style="color:#4ade80">Grabando... habla ahora</span>';
+    document.getElementById('preview_{seccion_key}').style.display = 'block';
+
+    rec_{seccion_key}.onresult = function(e) {{
+      var interim = '';
+      var final_txt = '';
+      for (var i = e.resultIndex; i < e.results.length; i++) {{
+        if (e.results[i].isFinal) {{
+          final_txt += e.results[i][0].transcript + ' ';
+        }} else {{
+          interim += e.results[i][0].transcript;
+        }}
+      }}
+      if (final_txt) texto_{seccion_key} += final_txt;
+      document.getElementById('preview_{seccion_key}').innerHTML =
+        '<b>' + texto_{seccion_key} + '</b>' +
+        '<em style="color:#888"> ' + interim + '</em>';
+    }};
+
+    rec_{seccion_key}.onerror = function(e) {{
+      document.getElementById('status_{seccion_key}').innerHTML =
+        '<span style="color:#f87171">Error: ' + e.error + ' — permite el microfono en Chrome</span>';
+    }};
+  }};
+
+  window.stopRec_{seccion_key} = function() {{
+    if (rec_{seccion_key}) rec_{seccion_key}.stop();
+    document.getElementById('btnStart_{seccion_key}').disabled = false;
+    document.getElementById('btnStart_{seccion_key}').style.background = '#cc0000';
+    document.getElementById('btnStop_{seccion_key}').disabled = true;
+    document.getElementById('btnStop_{seccion_key}').style.background = '#333';
+    document.getElementById('btnStop_{seccion_key}').style.color = '#888';
+    document.getElementById('status_{seccion_key}').innerHTML =
+      '<span style="color:#facc15">Grabacion detenida. Selecciona el campo y presiona Insertar.</span>';
+  }};
+
+  window.enviarTexto_{seccion_key} = function() {{
+    var txt = texto_{seccion_key}.trim();
+    if (!txt) {{ alert('Graba algo primero'); return; }}
+    var campo = document.getElementById('campoSel_{seccion_key}').value;
+    window.parent.postMessage({{
+      type: 'voz_insertar',
+      seccion: '{seccion_key}',
+      campo: campo,
+      texto: txt
+    }}, '*');
+    document.getElementById('status_{seccion_key}').innerHTML =
+      '<span style="color:#4ade80">Texto enviado a: ' + campo + '</span>';
+  }};
+
+  window.limpiarTexto_{seccion_key} = function() {{
+    texto_{seccion_key} = '';
+    document.getElementById('preview_{seccion_key}').innerHTML = '';
+    document.getElementById('preview_{seccion_key}').style.display = 'none';
+    document.getElementById('status_{seccion_key}').innerHTML = 'Listo para grabar';
+  }};
+}})();
+</script>"""
+
+    st.components.v1.html(html_mic, height=240, scrolling=False)
+
+    # Campo de texto para recibir el texto dictado manualmente si postMessage no funciona
+    st.caption("💡 Si el texto no aparece automáticamente en el campo, cópialo del panel verde y pégalo.")
+
+
+def campo_voz_html5(label, key, height=100, placeholder="Escribe o usa el micrófono..."):
+    """Campo de texto simple — el micrófono global maneja la voz"""
+    if key not in st.session_state: st.session_state[key]=""
+    val=st.text_area(label,value=st.session_state.get(key,""),
+        height=height,key=f"ta_{key}",placeholder=placeholder)
+    st.session_state[key]=val
+    return val
+
+def panel_voz_global(campos_disponibles, seccion_key):
     """Panel de micrófono global — un solo mic por sección, envía al campo elegido"""
     if f"voz_global_{seccion_key}" not in st.session_state:
         st.session_state[f"voz_global_{seccion_key}"]=""
