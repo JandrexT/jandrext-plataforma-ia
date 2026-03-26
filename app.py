@@ -112,14 +112,14 @@ def enviar_email(dest, asunto, cuerpo):
 # ── Telegram ──────────────────────────────────────────────────────────────────
 def telegram(msg):
     try:
-        token=os.getenv("TELEGRAM_BOT_TOKEN","").strip()
-        chat=os.getenv("TELEGRAM_CHAT_ID_ADMIN","").strip()
-        if not token or not chat: return False, "Token o Chat ID vacío"
-        r=req.post(f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id":chat,"text":msg,"parse_mode":"HTML"},timeout=10)
-        if r.status_code==200: return True, "OK"
-        return False, f"HTTP {r.status_code}: {r.text[:200]}"
-    except Exception as e: return False, str(e)
+        token=os.getenv("TELEGRAM_BOT_TOKEN","")
+        chat=os.getenv("TELEGRAM_CHAT_ID_ADMIN","")
+        if token and chat:
+            r=req.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id":chat,"text":msg,"parse_mode":"HTML"},timeout=8)
+            return r.status_code==200
+    except: pass
+    return False
 
 # ── Constantes ────────────────────────────────────────────────────────────────
 LINEAS = ["Automatización de accesos","Videovigilancia CCTV","Control de acceso y biometría",
@@ -186,7 +186,7 @@ def juez_fn(pregunta, respuestas):
         import google.generativeai as genai
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY",""))
         resumen="\n\n".join([f"--- {r['ia']} ---\n{r['respuesta']}" for r in respuestas if r["ok"]])
-        r=genai.GenerativeModel("gemini-1.5-flash").generate_content(
+        r=genai.GenerativeModel("gemini-2.0-flash").generate_content(
             f"{CONTEXTO}\nPregunta: \"{pregunta}\"\nRespuestas:\n{resumen}\nSintetiza empático, profesional, práctico. Sin encabezados.")
         return r.text.strip()
     except Exception as e: return f"❌ Error síntesis: {e}"
@@ -206,7 +206,7 @@ def ia_extraer_doc(b64, tipo="imagen"):
         prompt="""Extrae datos de este documento. Devuelve SOLO JSON válido sin markdown:
 {"razon_social":"","nit":"","direccion":"","municipio":"","departamento":"",
 "telefono":"","email":"","contacto":"","cargo_contacto":"","responsabilidad_fiscal":"","regimen_fiscal":""}"""
-        model=genai.GenerativeModel("gemini-1.5-flash")
+        model=genai.GenerativeModel("gemini-2.0-flash")
         mime="application/pdf" if tipo=="pdf" else "image/jpeg"
         r=model.generate_content([prompt,{"inline_data":{"mime_type":mime,"data":b64}}])
         txt=r.text.strip().replace("```json","").replace("```","").strip()
@@ -234,171 +234,406 @@ pre{{white-space:pre-wrap;line-height:1.6;}}
 </body></html>"""
 
 # ── Micrófono HTML5 nativo ────────────────────────────────────────────────────
-def campo_voz_html5(label, key, height=100, placeholder="Escribe o usa el micrófono..."):
-    """Campo de texto simple — el micrófono global maneja la voz"""
-    if key not in st.session_state: st.session_state[key]=""
-    val=st.text_area(label,value=st.session_state.get(key,""),
-        height=height,key=f"ta_{key}",placeholder=placeholder)
-    st.session_state[key]=val
-    return val
-
 def panel_voz_global(campos_disponibles, seccion_key):
-    """Panel de micrófono usando Web Speech API nativa del navegador"""
-    if f"voz_{seccion_key}" not in st.session_state:
-        st.session_state[f"voz_{seccion_key}"] = ""
-
+    """Panel de micrófono usando Web Speech API nativa"""
     campos_lista = list(campos_disponibles.keys())
-    campos_str = "|".join(campos_lista)
+    opts = "".join(f'<option value="{c}">{c}</option>' for c in campos_lista)
+    seccion_id = seccion_key.replace("-","_")
 
     html_mic = f"""
 <div style="background:#0a0f00;border:1px solid #cc0000;border-radius:10px;padding:1rem;margin-bottom:8px;">
-  <div style="color:#cc0000;font-size:0.75rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">
-    DICTAR POR VOZ
-  </div>
+  <div style="color:#cc0000;font-size:0.72rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">DICTAR POR VOZ</div>
   <div style="display:flex;gap:8px;margin-bottom:8px;">
-    <button id="btnStart_{seccion_key}"
-      onclick="startRec_{seccion_key}()"
-      style="flex:1;background:#cc0000;color:#fff;border:none;border-radius:8px;
-      padding:10px;font-size:14px;font-weight:700;cursor:pointer;">
+    <button id="btnStart_{seccion_id}" onclick="startRec_{seccion_id}()"
+      style="flex:1;background:#cc0000;color:#fff;border:none;border-radius:8px;padding:10px;font-size:14px;font-weight:700;cursor:pointer;">
       Iniciar grabacion
     </button>
-    <button id="btnStop_{seccion_key}"
-      onclick="stopRec_{seccion_key}()"
-      disabled
-      style="flex:1;background:#333;color:#888;border:none;border-radius:8px;
-      padding:10px;font-size:14px;font-weight:700;cursor:not-allowed;">
+    <button id="btnStop_{seccion_id}" onclick="stopRec_{seccion_id}()" disabled
+      style="flex:1;background:#333;color:#888;border:none;border-radius:8px;padding:10px;font-size:14px;font-weight:700;cursor:not-allowed;">
       Detener
     </button>
   </div>
-  <div id="status_{seccion_key}"
-    style="color:#888;font-size:12px;margin-bottom:6px;">
-    Listo para grabar en Chrome
-  </div>
-  <div id="preview_{seccion_key}"
-    style="background:#0a1a00;border:1px solid #166534;border-radius:6px;
-    padding:8px;color:#4ade80;font-size:13px;min-height:36px;margin-bottom:8px;
-    display:none;word-wrap:break-word;">
-  </div>
+  <div id="status_{seccion_id}" style="color:#888;font-size:12px;margin-bottom:6px;">Listo · Solo en Chrome</div>
+  <div id="preview_{seccion_id}" style="background:#0a1a00;border:1px solid #166534;border-radius:6px;padding:8px;color:#4ade80;font-size:13px;min-height:32px;margin-bottom:8px;display:none;word-wrap:break-word;"></div>
   <div style="display:flex;gap:8px;align-items:center;">
-    <select id="campoSel_{seccion_key}"
-      style="flex:1;background:#1a0000;color:#ccc;border:1px solid #3a0000;
-      border-radius:6px;padding:8px;font-size:13px;">
-      {chr(10).join(f'<option value="{c}">{c}</option>' for c in campos_lista)}
+    <select id="campoSel_{seccion_id}" style="flex:1;background:#1a0000;color:#ccc;border:1px solid #3a0000;border-radius:6px;padding:8px;font-size:13px;">
+      {opts}
     </select>
-    <button onclick="enviarTexto_{seccion_key}()"
-      style="background:#166534;color:#fff;border:none;border-radius:6px;
-      padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">
-      Insertar
-    </button>
-    <button onclick="limpiarTexto_{seccion_key}()"
-      style="background:#333;color:#888;border:none;border-radius:6px;
-      padding:8px 10px;font-size:13px;cursor:pointer;">
-      X
-    </button>
+    <button onclick="enviar_{seccion_id}()" style="background:#166534;color:#fff;border:none;border-radius:6px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;">Insertar</button>
+    <button onclick="limpiar_{seccion_id}()" style="background:#333;color:#888;border:none;border-radius:6px;padding:8px 10px;font-size:13px;cursor:pointer;">X</button>
   </div>
 </div>
-
 <script>
-(function() {{
-  var rec_{seccion_key} = null;
-  var texto_{seccion_key} = '';
-  var campos_map = {{}};
-  "{campos_str}".split("|").forEach(function(c) {{ campos_map[c] = c; }});
-
-  window.startRec_{seccion_key} = function() {{
-    if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {{
-      document.getElementById('status_{seccion_key}').innerHTML =
-        '<span style="color:#f87171">Usa Google Chrome para el microfono</span>';
-      return;
+(function(){{
+  var rec=null, txt='';
+  window.startRec_{seccion_id}=function(){{
+    if(!('webkitSpeechRecognition' in window||'SpeechRecognition' in window)){{
+      document.getElementById('status_{seccion_id}').innerHTML='<span style="color:#f87171">Usa Chrome</span>';return;
     }}
-    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    rec_{seccion_key} = new SR();
-    rec_{seccion_key}.lang = 'es-CO';
-    rec_{seccion_key}.continuous = true;
-    rec_{seccion_key}.interimResults = true;
-    rec_{seccion_key}.start();
-
-    document.getElementById('btnStart_{seccion_key}').disabled = true;
-    document.getElementById('btnStart_{seccion_key}').style.background = '#555';
-    document.getElementById('btnStop_{seccion_key}').disabled = false;
-    document.getElementById('btnStop_{seccion_key}').style.background = '#cc0000';
-    document.getElementById('btnStop_{seccion_key}').style.color = '#fff';
-    document.getElementById('btnStop_{seccion_key}').style.cursor = 'pointer';
-    document.getElementById('status_{seccion_key}').innerHTML =
-      '<span style="color:#4ade80">Grabando... habla ahora</span>';
-    document.getElementById('preview_{seccion_key}').style.display = 'block';
-
-    rec_{seccion_key}.onresult = function(e) {{
-      var interim = '';
-      var final_txt = '';
-      for (var i = e.resultIndex; i < e.results.length; i++) {{
-        if (e.results[i].isFinal) {{
-          final_txt += e.results[i][0].transcript + ' ';
-        }} else {{
-          interim += e.results[i][0].transcript;
-        }}
+    var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    rec=new SR(); rec.lang='es-CO'; rec.continuous=true; rec.interimResults=true;
+    rec.start();
+    document.getElementById('btnStart_{seccion_id}').disabled=true;
+    document.getElementById('btnStart_{seccion_id}').style.background='#555';
+    document.getElementById('btnStop_{seccion_id}').disabled=false;
+    document.getElementById('btnStop_{seccion_id}').style.background='#cc0000';
+    document.getElementById('btnStop_{seccion_id}').style.color='#fff';
+    document.getElementById('btnStop_{seccion_id}').style.cursor='pointer';
+    document.getElementById('status_{seccion_id}').innerHTML='<span style="color:#4ade80">Grabando...</span>';
+    document.getElementById('preview_{seccion_id}').style.display='block';
+    rec.onresult=function(e){{
+      var interim='',final='';
+      for(var i=e.resultIndex;i<e.results.length;i++){{
+        if(e.results[i].isFinal)final+=e.results[i][0].transcript+' ';
+        else interim+=e.results[i][0].transcript;
       }}
-      if (final_txt) texto_{seccion_key} += final_txt;
-      document.getElementById('preview_{seccion_key}').innerHTML =
-        '<b>' + texto_{seccion_key} + '</b>' +
-        '<em style="color:#888"> ' + interim + '</em>';
+      if(final)txt+=final;
+      document.getElementById('preview_{seccion_id}').innerHTML='<b>'+txt+'</b><em style="color:#888"> '+interim+'</em>';
     }};
-
-    rec_{seccion_key}.onerror = function(e) {{
-      document.getElementById('status_{seccion_key}').innerHTML =
-        '<span style="color:#f87171">Error: ' + e.error + ' — permite el microfono en Chrome</span>';
-    }};
+    rec.onerror=function(e){{document.getElementById('status_{seccion_id}').innerHTML='<span style="color:#f87171">Error: '+e.error+'</span>';}};
   }};
-
-  window.stopRec_{seccion_key} = function() {{
-    if (rec_{seccion_key}) rec_{seccion_key}.stop();
-    document.getElementById('btnStart_{seccion_key}').disabled = false;
-    document.getElementById('btnStart_{seccion_key}').style.background = '#cc0000';
-    document.getElementById('btnStop_{seccion_key}').disabled = true;
-    document.getElementById('btnStop_{seccion_key}').style.background = '#333';
-    document.getElementById('btnStop_{seccion_key}').style.color = '#888';
-    document.getElementById('status_{seccion_key}').innerHTML =
-      '<span style="color:#facc15">Grabacion detenida. Selecciona el campo y presiona Insertar.</span>';
+  window.stopRec_{seccion_id}=function(){{
+    if(rec)rec.stop();
+    document.getElementById('btnStart_{seccion_id}').disabled=false;
+    document.getElementById('btnStart_{seccion_id}').style.background='#cc0000';
+    document.getElementById('btnStop_{seccion_id}').disabled=true;
+    document.getElementById('btnStop_{seccion_id}').style.background='#333';
+    document.getElementById('btnStop_{seccion_id}').style.color='#888';
+    document.getElementById('status_{seccion_id}').innerHTML='<span style="color:#facc15">Detenido. Selecciona campo y presiona Insertar.</span>';
   }};
-
-  window.enviarTexto_{seccion_key} = function() {{
-    var txt = texto_{seccion_key}.trim();
-    if (!txt) {{ alert('Graba algo primero'); return; }}
-    var campo = document.getElementById('campoSel_{seccion_key}').value;
-    window.parent.postMessage({{
-      type: 'voz_insertar',
-      seccion: '{seccion_key}',
-      campo: campo,
-      texto: txt
-    }}, '*');
-    document.getElementById('status_{seccion_key}').innerHTML =
-      '<span style="color:#4ade80">Texto enviado a: ' + campo + '</span>';
+  window.enviar_{seccion_id}=function(){{
+    if(!txt.trim()){{alert('Graba algo primero');return;}}
+    var campo=document.getElementById('campoSel_{seccion_id}').value;
+    document.getElementById('status_{seccion_id}').innerHTML='<span style="color:#4ade80">Listo: '+txt.trim()+'</span>';
+    navigator.clipboard.writeText(txt.trim()).catch(function(){{}});
   }};
-
-  window.limpiarTexto_{seccion_key} = function() {{
-    texto_{seccion_key} = '';
-    document.getElementById('preview_{seccion_key}').innerHTML = '';
-    document.getElementById('preview_{seccion_key}').style.display = 'none';
-    document.getElementById('status_{seccion_key}').innerHTML = 'Listo para grabar';
+  window.limpiar_{seccion_id}=function(){{
+    txt='';
+    document.getElementById('preview_{seccion_id}').innerHTML='';
+    document.getElementById('preview_{seccion_id}').style.display='none';
+    document.getElementById('status_{seccion_id}').innerHTML='Listo';
   }};
 }})();
 </script>"""
-
-    st.components.v1.html(html_mic, height=240, scrolling=False)
-
-    # Campo de texto para recibir el texto dictado manualmente si postMessage no funciona
-    st.caption("💡 Si el texto no aparece automáticamente en el campo, cópialo del panel verde y pégalo.")
+    st.components.v1.html(html_mic, height=220, scrolling=False)
+    st.caption("💡 Después de presionar Insertar, el texto se copia al portapapeles — pégalo en el campo con Ctrl+V.")
 
 
 def campo_voz_html5(label, key, height=100, placeholder="Escribe o usa el micrófono..."):
-    """Campo de texto simple — el micrófono global maneja la voz"""
+    """Campo de texto con micrófono HTML5 nativo — funciona en Chrome, Edge, Samsung"""
     if key not in st.session_state: st.session_state[key]=""
-    val=st.text_area(label,value=st.session_state.get(key,""),
-        height=height,key=f"ta_{key}",placeholder=placeholder)
-    st.session_state[key]=val
-    return val
 
+    mic_html = f"""
+    <div style="margin-bottom:4px;">
+        <button id="btn_{key}" onclick="toggleMic_{key}()"
+            style="background:#cc0000;color:#fff;border:none;border-radius:8px;
+            padding:8px 16px;font-size:14px;font-weight:700;cursor:pointer;
+            display:inline-flex;align-items:center;gap:6px;touch-action:manipulation;">
+            🎤 Dictar {label}
+        </button>
+        <span id="status_{key}" style="color:#888;font-size:12px;margin-left:8px;"></span>
+    </div>
+    <div id="preview_{key}" style="background:#0a1a00;border:1px solid #4ade80;border-radius:6px;
+        padding:8px;margin:4px 0;color:#4ade80;font-size:13px;min-height:32px;display:none;"></div>
+    <script>
+    var rec_{key} = null;
+    var transcripto_{key} = '';
+    function toggleMic_{key}() {{
+        if (rec_{key} && rec_{key}.state === 'recording') {{
+            rec_{key}.stop();
+            document.getElementById('btn_{key}').innerHTML = '🎤 Dictar {label}';
+            document.getElementById('btn_{key}').style.background = '#cc0000';
+            document.getElementById('status_{key}').innerHTML = '';
+        }} else {{
+            startMic_{key}();
+        }}
+    }}
+    function startMic_{key}() {{
+        if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {{
+            document.getElementById('status_{key}').innerHTML = '⚠️ Usa Chrome para voz';
+            return;
+        }}
+        var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        rec_{key} = new SR();
+        rec_{key}.lang = 'es-CO';
+        rec_{key}.continuous = true;
+        rec_{key}.interimResults = true;
+        document.getElementById('btn_{key}').innerHTML = '⏹️ Detener';
+        document.getElementById('btn_{key}').style.background = '#166534';
+        document.getElementById('status_{key}').innerHTML = '🔴 Grabando...';
+        document.getElementById('preview_{key}').style.display = 'block';
+        rec_{key}.onresult = function(e) {{
+            var interim = '';
+            var final_text = '';
+            for (var i = e.resultIndex; i < e.results.length; i++) {{
+                if (e.results[i].isFinal) {{
+                    final_text += e.results[i][0].transcript + ' ';
+                }} else {{
+                    interim += e.results[i][0].transcript;
+                }}
+            }}
+            if (final_text) transcripto_{key} += final_text;
+            document.getElementById('preview_{key}').innerHTML = 
+                (transcripto_{key} + '<em style="color:#888"> ' + interim + '</em>');
+            // Enviar al padre para actualizar el campo
+            window.parent.postMessage({{
+                type: 'voz_update',
+                key: '{key}',
+                texto: transcripto_{key}.trim()
+            }}, '*');
+        }};
+        rec_{key}.onerror = function(e) {{
+            document.getElementById('status_{key}').innerHTML = '⚠️ ' + e.error;
+            document.getElementById('btn_{key}').innerHTML = '🎤 Dictar {label}';
+            document.getElementById('btn_{key}').style.background = '#cc0000';
+        }};
+        rec_{key}.onend = function() {{
+            document.getElementById('status_{key}').innerHTML = '';
+        }};
+        rec_{key}.start();
+    }}
+    </script>"""
 
+    st.components.v1.html(mic_html, height=80, scrolling=False)
+
+    # Campo de texto editable
+    nuevo_val = st.text_area(
+        label, value=st.session_state[key],
+        height=height, key=f"ta_{key}", placeholder=placeholder
+    )
+    if nuevo_val != st.session_state[key]:
+        st.session_state[key] = nuevo_val
+    return st.session_state[key]
+
+# ── Config página ─────────────────────────────────────────────────────────────
+st.set_page_config(page_title="JandrexT",page_icon="🧠",
+    layout="wide",initial_sidebar_state="expanded")
+
+# ── CSS ───────────────────────────────────────────────────────────────────────
+st.markdown(f"""<style>
+{FONTS_CSS}
+/* Fuentes institucionales SOLO para logo y lema */
+.logo-inst, .lema-inst, .sb-name, .h-name, .h-lema, .footer-lema {{
+    font-family:'Disclaimer-Classic','Disclaimer-Plain',sans-serif !important;}}
+.lema-jenna, .sb-lema, .footer-lema-j {{font-family:'JennaSue',sans-serif !important;}}
+
+/* Resto de la app: Inter legible */
+html,body,[class*="css"]{{font-family:'Inter','Helvetica Neue',Arial,sans-serif;}}
+
+/* LOGIN */
+.login-wrap{{max-width:480px;margin:2.5rem auto;background:#0f0000;
+    border:1px solid #cc0000;border-radius:16px;padding:2.5rem;}}
+.logo-login-j{{font-family:'Disclaimer-Classic',sans-serif;color:#cc0000;
+    font-size:5.5rem;font-weight:900;letter-spacing:8px;line-height:1.1;display:inline;}}
+.logo-login-mid{{font-family:'Disclaimer-Classic',sans-serif;color:#fff;
+    font-size:3.2rem;font-weight:900;letter-spacing:8px;line-height:1.1;display:inline;}}
+.logo-login-t{{font-family:'Disclaimer-Classic',sans-serif;color:#cc0000;
+    font-size:5.5rem;font-weight:900;letter-spacing:8px;line-height:1.1;display:inline;}}
+.logo-login-sub{{font-family:'Inter',sans-serif;color:#555;font-size:0.8rem;
+    letter-spacing:5px;text-transform:uppercase;margin:0.5rem 0 0;}}
+.logo-login-lema{{font-family:'JennaSue',sans-serif;color:#cc4444;
+    font-size:1.3rem;margin:0.3rem 0;}}
+
+/* HEADER */
+.header-inst{{background:linear-gradient(135deg,#0a0000,#1a0000);border-radius:12px;
+    padding:1.4rem 2rem;margin-bottom:1rem;border:1px solid #cc0000;
+    display:flex;align-items:center;justify-content:space-between;gap:1rem;}}
+.h-logo{{height:70px;width:auto;flex-shrink:0;}}
+.h-brand{{flex:1;}}
+.h-name{{font-family:'Disclaimer-Classic',sans-serif;color:#fff;font-size:2.4rem;
+    font-weight:900;letter-spacing:6px;margin:0;line-height:1.1;}}
+.h-acc{{color:#cc0000;}}
+.h-lema{{font-family:'JennaSue',sans-serif;color:#cc4444;font-size:1.1rem;margin:0.1rem 0;}}
+.h-sub{{font-family:'Inter',sans-serif;color:#444;font-size:0.65rem;
+    letter-spacing:3px;text-transform:uppercase;margin:0;}}
+.h-user{{text-align:right;flex-shrink:0;}}
+.h-saludo{{font-family:'JennaSue',sans-serif;color:#cc6666;font-size:0.95rem;}}
+.h-nombre{{color:#fff;font-weight:700;font-size:1rem;}}
+.h-rol{{color:#cc0000;font-size:0.7rem;letter-spacing:1px;text-transform:uppercase;}}
+.h-fecha{{color:#444;font-size:0.72rem;}}
+
+/* SIDEBAR */
+.sb-wrap{{background:#0f0000;border:1px solid #cc0000;border-radius:10px;
+    padding:1rem;text-align:center;margin-bottom:0.5rem;}}
+.sb-name{{font-family:'Disclaimer-Classic',sans-serif;color:#fff;
+    font-size:1.2rem;font-weight:900;margin:0;letter-spacing:4px;}}
+.sb-acc{{color:#cc0000;}}
+.sb-sub{{font-family:'Inter',sans-serif;color:#cc0000;font-size:0.65rem;
+    margin:0;letter-spacing:2px;text-transform:uppercase;}}
+.sb-lema{{font-family:'JennaSue',sans-serif;color:#cc6666;font-size:0.9rem;margin:0.2rem 0 0;}}
+.ub{{background:#1a0000;border:1px solid #cc0000;border-radius:8px;
+    padding:0.5rem 0.8rem;margin-bottom:0.5rem;text-align:center;}}
+.ub-n{{color:#ffcccc;font-size:0.9rem;font-weight:700;margin:0;}}
+.ub-r{{color:#cc0000;font-size:0.72rem;margin:0;text-transform:uppercase;letter-spacing:1px;}}
+.nav-title{{background:#1a0000;border:1px solid #cc0000;border-radius:6px;
+    padding:0.3rem 0.7rem;color:#cc0000;font-size:0.72rem;font-weight:700;
+    letter-spacing:2px;text-transform:uppercase;margin:0.5rem 0 0.2rem;display:block;}}
+
+/* Botón activo en sidebar */
+.stButton>button[kind="secondary"]{{background:transparent;border:1px solid #333;color:#ccc;}}
+.stButton>button[kind="secondary"]:hover{{border-color:#cc0000;color:#fff;}}
+
+/* CARDS */
+.ia-card{{background:#0f0000;border:1px solid #2a0000;border-radius:10px;padding:0.8rem;}}
+.ia-card h4{{margin:0 0 0.2rem;font-size:0.95rem;color:#f0f0f0;font-weight:600;}}
+.badge-ok{{color:#4ade80;font-weight:600;font-size:0.82rem;}}
+.badge-err{{color:#f87171;font-weight:600;font-size:0.82rem;}}
+.t-seg{{color:#555;font-size:0.72rem;}}
+.resp-card{{background:#0f0000;border:2px solid #cc0000;border-radius:12px;
+    padding:1.4rem;color:#f0f0f0;line-height:1.75;margin-top:0.5rem;}}
+.resp-titulo{{font-family:'Inter',sans-serif;color:#cc0000;font-size:0.7rem;
+    font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:0.8rem;}}
+.chat-u{{background:#1a0000;border:1px solid #cc0000;border-radius:12px 12px 4px 12px;
+    padding:0.8rem 1rem;margin:0.3rem 0;color:#f0f0f0;font-size:0.95rem;}}
+.chat-ia{{background:#0a0a0a;border:1px solid #222;border-radius:12px 12px 12px 4px;
+    padding:0.8rem 1rem;margin:0.3rem 0;color:#ddd;font-size:0.95rem;}}
+.meta{{color:#555;font-size:0.72rem;margin-bottom:0.2rem;}}
+.tip{{background:#0a0f00;border-left:3px solid #cc0000;border-radius:0 6px 6px 0;
+    padding:0.5rem 0.8rem;color:#999;font-size:0.82rem;margin:0.4rem 0;}}
+.doc-borrador{{background:#0a0f0a;border:1px solid #166534;border-radius:10px;padding:1.2rem;}}
+.footer-inst{{background:#0a0000;border:1px solid #1a0000;border-radius:8px;
+    padding:0.7rem;text-align:center;margin-top:1.5rem;color:#555;font-size:0.75rem;}}
+.footer-acc{{font-family:'Disclaimer-Classic',sans-serif;color:#cc0000;font-weight:700;}}
+.footer-lema-j{{font-family:'JennaSue',sans-serif;color:#cc4444;font-size:0.95rem;}}
+.divider{{border:none;border-top:1px solid #1a0000;margin:1rem 0;}}
+.garantia-ok{{color:#4ade80;font-size:0.8rem;}}
+.garantia-alerta{{color:#f87171;font-size:0.8rem;}}
+
+/* SIDEBAR BOTÓN ACTIVO */
+div[data-testid="stSidebar"] .stButton>button{{
+    background:transparent;border:1px solid #2a0000;color:#ccc;
+    border-radius:8px;text-align:left;padding:0.5rem 0.8rem;
+    font-size:0.9rem;transition:all 0.2s;}}
+div[data-testid="stSidebar"] .stButton>button:hover{{
+    background:#1a0000;border-color:#cc0000;color:#fff;}}
+
+/* MÓVIL */
+@media(max-width:768px){{
+    .header-inst{{flex-direction:column;padding:0.8rem;gap:0.5rem;}}
+    .h-user{{text-align:left;}}
+    .h-logo{{height:50px;}}
+    .h-name{{font-size:1.8rem;letter-spacing:4px;}}
+    .stButton>button{{min-height:50px;font-size:1rem;}}
+    .stTextInput>div>input{{min-height:46px;font-size:1rem;}}
+    h2{{font-size:1.4rem;}} h3{{font-size:1.1rem;}}
+}}
+</style>""", unsafe_allow_html=True)
+
+# ── Session state ─────────────────────────────────────────────────────────────
+for k,v in [("usuario",None),("seccion","chat"),("chat_activo",None),
+            ("proy_activo",None),("proy_nombre",""),("sc_activo",None),
+            ("confirm_logout",False)]:
+    if k not in st.session_state: st.session_state[k]=v
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LOGIN
+# ══════════════════════════════════════════════════════════════════════════════
+if not st.session_state.usuario:
+    c1,c2,c3=st.columns([1,2,1])
+    with c2:
+        st.markdown(f"""<div class="login-wrap">
+        <div style="text-align:center;margin-bottom:1.8rem;">
+            <div style="line-height:1.2;">
+                <span class="logo-login-j">J</span>
+                <span class="logo-login-mid">ANDREX</span>
+                <span class="logo-login-t">T</span>
+            </div>
+            <p class="logo-login-sub">Soluciones Integrales</p>
+            <p class="logo-login-lema">Apasionados por el buen servicio</p>
+        </div></div>""", unsafe_allow_html=True)
+        st.markdown("### 🔐 Iniciar sesión")
+        email=st.text_input("Correo electrónico",placeholder="usuario@jandrext.com")
+        pwd=st.text_input("Contraseña",type="password")
+        st.checkbox("Recordar en este dispositivo")
+        if st.button("Ingresar",type="primary",use_container_width=True):
+            if email and pwd:
+                with st.spinner("Verificando..."):
+                    usuario,error=verificar_login(email.strip(),pwd.strip())
+                if usuario: st.session_state.usuario=usuario; st.rerun()
+                else: st.error(error)
+            else: st.warning("⚠️ Completa todos los campos.")
+        st.caption("¿Olvidaste tu contraseña? Contacta: proyectos@jandrext.com · 317 391 0621")
+    st.stop()
+
+u=st.session_state.usuario
+rol=u.get("rol",""); nombre=u.get("nombre","")
+rol_label=ROL_LABEL.get(rol,rol)
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown(f"""<div class="sb-wrap">
+        <p class="sb-name">Jandre<span class="sb-acc">x</span>T</p>
+        <p class="sb-sub">Soluciones Integrales</p>
+        <p class="sb-lema">Apasionados por el buen servicio</p>
+    </div>
+    <div class="ub"><p class="ub-n">👤 {nombre}</p><p class="ub-r">{rol_label}</p></div>""",
+    unsafe_allow_html=True)
+
+    st.markdown('<span class="nav-title">📌 Navegación</span>',unsafe_allow_html=True)
+
+    sec_actual=st.session_state.seccion
+    if rol=="cliente":
+        SECS=[("📋","requerimientos","Mis Solicitudes"),("📖","mis_manuales","Mis Manuales")]
+    elif rol=="tecnico":
+        SECS=[("📅","agenda","Mi Agenda"),("👥","asistencia","Mi Asistencia"),("💬","chat","Consultas")]
+    else:
+        SECS=[("💬","chat","Chats"),("📁","proyectos","Proyectos"),
+              ("📅","agenda","Agenda"),("👥","asistencia","Asistencia"),
+              ("📚","biblioteca","Biblioteca"),("📄","documentos","Documentos"),
+              ("📖","manuales","Manuales"),("💼","ventas","Ventas"),
+              ("🤝","aliados","Aliados"),("📊","liquidaciones","Liquidaciones"),
+              ("👑","usuarios","Especialistas y Aliados"),("⚙️","config","Configuración")]
+
+    for ico,key,label in SECS:
+        es_activo = sec_actual==key
+        btn_style = "primary" if es_activo else "secondary"
+        prefijo = "▶ " if es_activo else ""
+        if st.button(f"{ico} {prefijo}{label}",key=f"nav_{key}",
+                     use_container_width=True,type=btn_style):
+            # Limpiar campos de voz al cambiar sección
+            for k in list(st.session_state.keys()):
+                if k.startswith("ta_") or k.startswith("inp_"):
+                    st.session_state[k]=""
+            st.session_state.seccion=key
+            st.session_state.chat_activo=None
+            st.rerun()
+
+    if rol=="admin":
+        st.markdown('<span class="nav-title">⚡ IAs</span>',unsafe_allow_html=True)
+        usar_g=st.toggle("🔵 Gemini",value=True)
+        usar_r=st.toggle("🟠 Groq",value=True)
+        usar_v=st.toggle("🟣 Venice",value=True)
+    else:
+        usar_g=usar_r=usar_v=True
+
+    st.markdown("---")
+    if st.button("🚪 Cerrar sesión",use_container_width=True):
+        if st.session_state.confirm_logout:
+            st.session_state.clear(); st.rerun()
+        else:
+            st.session_state.confirm_logout=True
+            st.warning("¿Confirmas? Presiona de nuevo.")
+
+# ── Header ────────────────────────────────────────────────────────────────────
+logo_tag=f'<img src="data:image/png;base64,{logo_b64}" class="h-logo"/>' if logo_b64 else ""
+st.markdown(f"""<div class="header-inst">
+    {logo_tag}
+    <div class="h-brand">
+        <p class="h-name">Jandre<span class="h-acc">x</span>T</p>
+        <p class="h-lema">Apasionados por el buen servicio</p>
+        <p class="h-sub">Soluciones Integrales · Plataforma v13.0</p>
+    </div>
+    <div class="h-user">
+        <div class="h-saludo">{saludo},</div>
+        <div class="h-nombre">{nombre}</div>
+        <div class="h-rol">{rol_label}</div>
+        <div class="h-fecha">{fecha_str()}</div>
+    </div>
+</div>""", unsafe_allow_html=True)
+
+sec=st.session_state.seccion
+
+# ── Panel consulta ────────────────────────────────────────────────────────────
 def panel_consulta(chat_id, ctx="General"):
     msgs=supa("mensajes_chat",filtro=f"?chat_id=eq.{chat_id}&order=creado_en.asc")
     if msgs and isinstance(msgs,list):
@@ -638,14 +873,7 @@ elif sec=="agenda":
     with col_f:
         if rol=="admin":
             st.markdown("### ➕ Nueva tarea")
-            panel_voz_global({
-                "Tarea": "ag_tarea",
-                "Descripción": "ag_desc",
-                "Estado inicial": "ag_ei",
-                "Recomendaciones": "ag_recom",
-                "Lección aprendida": "ag_leccion"
-            }, "agenda")
-            a_t=campo_voz_html5("Tarea *","ag_tarea",height=80,placeholder="Describe la tarea...")
+            a_t=campo_voz_html5("la tarea","ag_tarea",height=80,placeholder="Describe la tarea...")
             a_al=st.selectbox("Aliado / Sitio *",aliados_nombres)
             a_li=st.selectbox("Línea de servicio",LINEAS)
             a_pr=st.selectbox("Prioridad",["🔴 Urgente (36h)","🟡 Normal (60h)","🟢 Puede esperar (90h)"])
@@ -802,12 +1030,7 @@ elif sec=="asistencia":
 
     inf_aliado=st.selectbox("Proyecto / Aliado",aliados_nombres,key="inf_ali")
     inf_serv=st.selectbox("Tipo de servicio",LINEAS,key="inf_serv")
-    panel_voz_global({
-        "Trabajo realizado": "inf_desc",
-        "Materiales utilizados": "inf_elem",
-        "Pendientes": "inf_pend"
-    }, "asistencia")
-    inf_desc=campo_voz_html5("Descripción del trabajo","inf_desc",height=110,
+    inf_desc=campo_voz_html5("el trabajo realizado","inf_desc",height=110,
         placeholder="Describe qué encontraste, qué hiciste y qué quedó...")
     inf_elem=campo_voz_html5("los materiales utilizados","inf_elem",height=80,
         placeholder="Ej: 2 tornillos M8, 1 hidráulico Speedy M25...")
@@ -908,9 +1131,6 @@ elif sec=="aliados":
         a_rf=ali_field("responsabilidad_fiscal","Responsabilidad Fiscal","R-99-PN")
         a_reg=ali_field("regimen_fiscal","Régimen Fiscal","49")
         a_not=st.text_area("Notas adicionales",key="ali_notas",height=60)
-        a_hor=campo_voz_html5("Horarios de atención","ali_horarios",height=70,
-            placeholder="Ej: Lun-Vie 8am-12pm / 2pm-6pm · Sáb 8am-12pm · Dom Cerrado")
-        st.caption("💡 También puedes subir una foto del horario y extraer los datos automáticamente")
 
         if st.button("💾 Guardar Aliado",type="primary",use_container_width=True):
             rs=st.session_state.get("ali_razon_social","")
@@ -928,8 +1148,7 @@ elif sec=="aliados":
                     "cargo_contacto":st.session_state.get("ali_cargo_contacto",""),
                     "responsabilidad_fiscal":st.session_state.get("ali_responsabilidad_fiscal",""),
                     "regimen_fiscal":st.session_state.get("ali_regimen_fiscal",""),
-                    "notas":a_not,
-                    "horarios":st.session_state.get("ali_horarios","")})
+                    "notas":a_not})
                 if res:
                     for k in list(st.session_state.keys()):
                         if k.startswith("ali_"): del st.session_state[k]
@@ -951,7 +1170,6 @@ elif sec=="aliados":
                 c2.markdown(f"**Contacto:** {a.get('contacto','')} — {a.get('cargo_contacto','')}")
                 c2.markdown(f"**NIT:** {a.get('nit','')} | **Rég:** {a.get('regimen_fiscal','')}")
                 if a.get("notas"): st.caption(f"📝 {a['notas']}")
-                if a.get("horarios"): st.info(f"🕐 Horarios: {a['horarios']}")
                 if puede_borrar(u):
                     if st.button("🗑️ Eliminar",key=f"da_{a['id']}"):
                         supa("clientes","DELETE",filtro=f"?id=eq.{a['id']}"); st.rerun()
@@ -973,10 +1191,7 @@ elif sec=="documentos" and tiene_modulo(u,"documentos"):
     doc_aliado=c1.selectbox("Aliado",aliados_nombres)
     doc_proy=c2.selectbox("Proyecto",proyectos_nombres)
     doc_linea=st.selectbox("Línea de servicio",LINEAS)
-    panel_voz_global({
-        "Contenido del documento": "doc_cont"
-    }, "documentos")
-    doc_contenido=campo_voz_html5("Contenido del documento","doc_cont",height=150,
+    doc_contenido=campo_voz_html5("el contenido del documento","doc_cont",height=150,
         placeholder="Describe equipos, actividades, valores...")
     c1,c2=st.columns(2)
     doc_valor=c1.number_input("Valor total (COP)",min_value=0,step=50000)
@@ -1050,10 +1265,7 @@ elif sec=="manuales" and tiene_modulo(u,"manuales"):
             "Guía de Configuración y Contraseñas","Plan de Mantenimiento Preventivo",
             "Manual de Operación Diaria","Guía de Acceso Remoto"])
         m_lin=st.selectbox("Línea de servicio",LINEAS)
-        panel_voz_global({
-            "Detalles del sistema": "man_det"
-        }, "manuales")
-        m_det=campo_voz_html5("Detalles específicos","man_det",height=130,
+        m_det=campo_voz_html5("los detalles","man_det",height=130,
             placeholder="IP, contraseñas, equipos instalados...")
         m_cli=st.selectbox("Tipo de destinatario",["copropiedad","empresa","natural","administracion"])
         if st.button("📖 Generar manual",type="primary",use_container_width=True):
@@ -1096,15 +1308,12 @@ elif sec=="ventas" and tiene_modulo(u,"ventas"):
     st.markdown("## 💼 Asistente de Ventas")
     aliados_list=supa("clientes",filtro="?order=nombre.asc") or []
     aliados_nombres=["Nuevo aliado"]+[a["nombre"] for a in aliados_list]
-    panel_voz_global({
-        "Necesidad del aliado": "ven_nec"
-    }, "ventas")
     c1,c2=st.columns(2)
     with c1:
         v_ali=st.selectbox("Aliado",aliados_nombres)
         aliado_data=next((a for a in aliados_list if a["nombre"]==v_ali),{})
         v_li=st.selectbox("Línea de servicio",LINEAS)
-        v_ne=campo_voz_html5("Necesidad del aliado","ven_nec",height=100)
+        v_ne=campo_voz_html5("la necesidad del aliado","ven_nec",height=100)
     with c2:
         v_ti=st.selectbox("Tipo",["copropiedad","empresa","natural","administracion"])
         v_pr=st.selectbox("Presupuesto",["No definido","< $1M","$1M-$5M","$5M-$15M","$15M-$50M","> $50M"])
@@ -1139,26 +1348,10 @@ elif sec=="biblioteca" and tiene_modulo(u,"biblioteca"):
         bval=st.session_state.get("bib_bus","")
         filtrados=[m for m in msgs if not bval or bval.lower() in m.get("pregunta","").lower() or bval.lower() in m.get("sintesis","").lower()]
         st.metric("Consultas",len(filtrados))
-        proyectos_bib=supa("proyectos",filtro="?order=nombre.asc") or []
-        proy_bib_nombres=["Sin proyecto"]+[p["nombre"] for p in proyectos_bib]
         for m in filtrados:
             with st.expander(f"📌 {m.get('pregunta','')[:60]}... | {m.get('creado_en','')[:10]}"):
                 st.markdown(m.get("sintesis",""))
                 st.code(m.get("sintesis",""),language=None)
-                # Mover a proyecto
-                cb1,cb2=st.columns([3,1])
-                with cb1:
-                    proy_dest=st.selectbox("📁 Mover a proyecto",proy_bib_nombres,key=f"pbib_{m['id']}")
-                with cb2:
-                    if st.button("📁 Mover",key=f"mbib_{m['id']}",use_container_width=True):
-                        pid_bib=next((p["id"] for p in proyectos_bib if p["nombre"]==proy_dest),None)
-                        if pid_bib:
-                            # Crear chat en el proyecto con esta consulta
-                            nuevo_chat=supa("chats","POST",{"titulo":m.get("pregunta","")[:50],
-                                "proyecto_id":pid_bib,"usuario_id":u["id"]})
-                            if nuevo_chat and isinstance(nuevo_chat,list):
-                                supa("mensajes_chat","PATCH",{"chat_id":nuevo_chat[0]["id"]},f"?id=eq.{m['id']}")
-                                st.success(f"✅ Movido a {proy_dest}"); st.rerun()
                 if puede_borrar(u):
                     if st.button("🗑️",key=f"db_{m['id']}"): supa("mensajes_chat","DELETE",filtro=f"?id=eq.{m['id']}"); st.rerun()
     with tab2:
@@ -1334,11 +1527,9 @@ elif sec=="config" and rol=="admin":
         tg_chat=os.getenv("TELEGRAM_CHAT_ID_ADMIN","No configurado")
         st.info(f"**Bot:** @JandrexTAsistencia_bot | **Chat ID:** {tg_chat}")
         if st.button("📱 Enviar mensaje de prueba",type="primary"):
-            resultado=telegram(f"✅ <b>Prueba JandrexT v14</b>\nPlataforma funcionando correctamente.\n{fecha_str()}")
-            ok = resultado[0] if isinstance(resultado, tuple) else resultado
-            msg_err = resultado[1] if isinstance(resultado, tuple) else ""
+            ok=telegram(f"✅ <b>Prueba JandrexT v13</b>\nPlataforma funcionando correctamente.\n{fecha_str()}")
             if ok: st.success("✅ Mensaje enviado correctamente")
-            else: st.error(f"❌ Error: {msg_err}")
+            else: st.error("❌ Error — verifica el token y chat ID en Secrets")
 
     with tab3:
         st.markdown("### 🧪 Limpieza de datos de prueba")
@@ -1379,12 +1570,12 @@ elif sec=="config" and rol=="admin":
         c1.metric("Aliados",total_a)
         c2.metric("Tareas pendientes",total_t)
         c3.metric("Manuales",total_m)
-        st.caption(f"Última actualización: {fecha_str()} | Plataforma v14.0 | JandrexT Soluciones Integrales")
+        st.caption(f"Última actualización: {fecha_str()} | Plataforma v13.0 | JandrexT Soluciones Integrales")
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown(f"""<div class="footer-inst">
     <span class="footer-acc">JandrexT</span> Soluciones Integrales &nbsp;·&nbsp;
     Director de Proyectos: <span class="footer-acc">Andrés Tapiero</span> &nbsp;·&nbsp;
-    Plataforma v14.0 &nbsp;·&nbsp; 🔒 Sistema Interno<br>
+    Plataforma v13.0 &nbsp;·&nbsp; 🔒 Sistema Interno<br>
     <span class="footer-lema-j">Apasionados por el buen servicio</span>
 </div>""", unsafe_allow_html=True)
