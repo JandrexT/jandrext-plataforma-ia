@@ -861,7 +861,11 @@ elif sec=="asistencia":
             for r in activos:
                 try:
                     lat,lng=r["ubicacion"].split(",")
-                    markers+=f"L.marker([{lat},{lng}]).addTo(m).bindPopup('<b>{r.get(\"colaborador_nombre\",\"\")}</b><br>📍{r.get(\"proyecto\",\"\")}<br>📋{r.get(\"tarea\",\"\")}<br>🕐{r.get(\"fecha\",\"\")[:16]}').openPopup();"
+                    cn=r.get("colaborador_nombre","")
+                    pr=r.get("proyecto","")
+                    ta=r.get("tarea","")
+                    fe=r.get("fecha","")[:16]
+                    markers+=f"L.marker([{lat},{lng}]).addTo(m).bindPopup('<b>{cn}</b><br>{pr}<br>{ta}<br>{fe}').openPopup();"
                 except: pass
             mapa_html=f"""<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
             <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
