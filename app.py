@@ -330,7 +330,8 @@ def ia_extraer_doc(b64, tipo="imagen"):
     prompt_json = """Eres un asistente que extrae datos de documentos colombianos (RUT, NIT, cámara de comercio).
 Analiza el documento y devuelve SOLO un JSON válido con esta estructura exacta, sin texto adicional ni markdown:
 {"razon_social":"","nit":"","direccion":"","municipio":"","departamento":"","telefono":"","email":"","contacto":"","cargo_contacto":"","responsabilidad_fiscal":"","regimen_fiscal":""}
-Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones."""
+Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones.
+Para el campo telefono: incluye teléfono fijo, celular o cualquier número de contacto que encuentres. Si hay varios, sepáralos con coma."""
 
     errores = []
 
@@ -1208,10 +1209,12 @@ if sec=="inicio":
         if not agenda_hoy:
             st.markdown('<div class="tip">Sin eventos para hoy.</div>',unsafe_allow_html=True)
         for ev in agenda_hoy:
+            hora_ev = ev.get("hora","") or ev.get("hora_inicio","") or ""
+            titulo_ev = ev.get("titulo","") or ev.get("tarea","") or ""
             st.markdown(f'''<div style="background:#0a0000;border-left:3px solid #cc0000;
                 padding:0.6rem 1rem;margin:0.3rem 0;border-radius:0 6px 6px 0;">
-                <span style="color:#cc0000;font-size:0.85rem;">{ev.get("hora","")}</span>
-                <span style="color:#fff;"> {ev.get("titulo","")[:30]}</span>
+                <span style="color:#cc0000;font-size:0.85rem;">{str(hora_ev)[:5]}</span>
+                <span style="color:#fff;"> {str(titulo_ev)[:30]}</span>
                 </div>''',unsafe_allow_html=True)
 
 elif sec=="chat":
@@ -1395,13 +1398,7 @@ elif sec=="agenda":
     with col_f:
         if rol=="admin":
             st.markdown("### ➕ Nueva tarea")
-            panel_voz_global({
-                "Tarea": "ag_tarea",
-                "Descripción": "ag_desc",
-                "Estado inicial": "ag_ei",
-                "Recomendaciones": "ag_recom",
-                "Lección aprendida": "ag_leccion"
-            }, "agenda")
+            
             a_t=campo_voz_html5("Tarea *","ag_tarea",height=80,placeholder="Describe la tarea...")
             a_al=st.selectbox("Aliado / Sitio *",aliados_nombres)
             a_li=st.selectbox("Línea de servicio",LINEAS)
@@ -1652,8 +1649,10 @@ elif sec=="aliados":
                     st.warning("⚠️ No se encontraron datos en el documento. Intente con una imagen más clara o ingrese los datos manualmente.")
 
         def ali_field(k,label,placeholder=""):
-            val=st.session_state.get(f"ali_{k}","")
-            return st.text_input(label,value=val,placeholder=placeholder,key=f"ali_{k}")
+            # Sin value= para evitar conflicto con session_state key
+            if f"ali_{k}" not in st.session_state:
+                st.session_state[f"ali_{k}"] = ""
+            return st.text_input(label,placeholder=placeholder,key=f"ali_{k}")
 
         a_rs=ali_field("razon_social","Razón Social *")
         a_nit=ali_field("nit","NIT / Identificación *")
