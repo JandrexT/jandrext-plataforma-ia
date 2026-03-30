@@ -188,21 +188,49 @@ def venice_fn(p):
     except Exception as e: return {"ia":"Venice","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
 
 def juez_fn(pregunta, respuestas):
+    resumen="\n\n".join([f"--- {r['ia']} ---\n{r['respuesta']}" for r in respuestas if r["ok"]])
+    prompt=f"{CONTEXTO}\nPregunta: \"{pregunta}\"\nRespuestas:\n{resumen}\nSintetiza la mejor respuesta. Empático, profesional, práctico. Sin encabezados."
+    # Intentar Gemini
     try:
         import google.generativeai as genai
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY",""))
-        resumen="\n\n".join([f"--- {r['ia']} ---\n{r['respuesta']}" for r in respuestas if r["ok"]])
-        r=genai.GenerativeModel("gemini-pro").generate_content(
-            f"{CONTEXTO}\nPregunta: \"{pregunta}\"\nRespuestas:\n{resumen}\nSintetiza empático, profesional, práctico. Sin encabezados.")
-        return r.text.strip()
-    except Exception as e: return f"❌ Error síntesis: {e}"
+        for m in ["gemini-1.5-flash","gemini-1.5-pro","gemini-pro","gemini-1.0-pro"]:
+            try:
+                r=genai.GenerativeModel(m).generate_content(prompt)
+                return r.text.strip()
+            except: continue
+    except: pass
+    # Fallback Groq
+    try:
+        from groq import Groq
+        r=Groq(api_key=os.getenv("GROQ_API_KEY","")).chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role":"system","content":CONTEXTO},{"role":"user","content":f"Sintetiza la mejor respuesta para: '{pregunta}'\n\nRespuestas:\n{resumen}"}],
+            max_tokens=1000)
+        return r.choices[0].message.content.strip()
+    except:
+        ok=[r for r in respuestas if r["ok"]]
+        return ok[0]["respuesta"] if ok else "❌ No hay respuesta disponible"
 
-def ia_generar(prompt, modelo="gemini-pro"):
+def ia_generar(prompt, modelo="gemini-1.5-flash"):
+    # Intentar Gemini con varios modelos
     try:
         import google.generativeai as genai
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY",""))
-        r=genai.GenerativeModel(modelo).generate_content(CONTEXTO+"\n\n"+prompt)
-        return r.text.strip()
+        for m in ["gemini-1.5-flash","gemini-1.5-pro","gemini-pro","gemini-1.0-pro"]:
+            try:
+                r=genai.GenerativeModel(m).generate_content(CONTEXTO+"\n\n"+prompt)
+                return r.text.strip()
+            except: continue
+    except: pass
+    # Fallback Groq
+    try:
+        from groq import Groq
+        r=Groq(api_key=os.getenv("GROQ_API_KEY","")).chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role":"system","content":CONTEXTO},{"role":"user","content":prompt}],
+            max_tokens=1500)
+        return r.choices[0].message.content.strip()
     except Exception as e: return f"❌ Error: {e}"
 
 def ia_extraer_doc(b64, tipo="imagen"):
