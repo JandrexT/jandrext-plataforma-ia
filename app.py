@@ -156,10 +156,12 @@ Tel: 317 391 0621 | proyectos@jandrext.com | Bogotá, Colombia
 Comportamiento: empático, profesional, práctico. Normas colombianas cuando aplique."""
 
 # ── IAs ───────────────────────────────────────────────────────────────────────
-def gemini_fn(p, modelo="gemini-1.5-flash-latest"):
+def gemini_fn(p, modelo="gemini-pro"):
     try:
         import google.generativeai as genai; t=time.time()
-        genai.configure(api_key=os.getenv("GOOGLE_API_KEY",""))
+        genai.configure(api_key=os.getenv("GOOGLE_API_KEY",""),
+            transport="rest",
+            client_options={"api_endpoint":"https://generativelanguage.googleapis.com"})
         r=genai.GenerativeModel(modelo).generate_content(CONTEXTO+"\n\nConsulta: "+p)
         return {"ia":"Gemini","icono":"🔵","respuesta":r.text.strip(),"tiempo":round(time.time()-t,2),"ok":True}
     except Exception as e: return {"ia":"Gemini","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
@@ -187,12 +189,12 @@ def juez_fn(pregunta, respuestas):
         import google.generativeai as genai
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY",""))
         resumen="\n\n".join([f"--- {r['ia']} ---\n{r['respuesta']}" for r in respuestas if r["ok"]])
-        r=genai.GenerativeModel("gemini-1.5-flash-latest").generate_content(
+        r=genai.GenerativeModel("gemini-pro").generate_content(
             f"{CONTEXTO}\nPregunta: \"{pregunta}\"\nRespuestas:\n{resumen}\nSintetiza empático, profesional, práctico. Sin encabezados.")
         return r.text.strip()
     except Exception as e: return f"❌ Error síntesis: {e}"
 
-def ia_generar(prompt, modelo="gemini-1.5-flash-latest"):
+def ia_generar(prompt, modelo="gemini-pro"):
     try:
         import google.generativeai as genai
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY",""))
@@ -207,7 +209,7 @@ def ia_extraer_doc(b64, tipo="imagen"):
         prompt="""Extrae datos de este documento. Devuelve SOLO JSON válido sin markdown:
 {"razon_social":"","nit":"","direccion":"","municipio":"","departamento":"",
 "telefono":"","email":"","contacto":"","cargo_contacto":"","responsabilidad_fiscal":"","regimen_fiscal":""}"""
-        model=genai.GenerativeModel("gemini-1.5-flash-latest")
+        model=genai.GenerativeModel("gemini-pro")
         mime="application/pdf" if tipo=="pdf" else "image/jpeg"
         r=model.generate_content([prompt,{"inline_data":{"mime_type":mime,"data":b64}}])
         txt=r.text.strip().replace("```json","").replace("```","").strip()
