@@ -331,7 +331,8 @@ def ia_extraer_doc(b64, tipo="imagen"):
 Analiza el documento y devuelve SOLO un JSON válido con esta estructura exacta, sin texto adicional ni markdown:
 {"razon_social":"","nit":"","direccion":"","municipio":"","departamento":"","telefono":"","email":"","contacto":"","cargo_contacto":"","responsabilidad_fiscal":"","regimen_fiscal":""}
 Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones.
-Para el campo telefono: incluye teléfono fijo, celular o cualquier número de contacto que encuentres. Si hay varios, sepáralos con coma."""
+Para el campo telefono: incluye teléfono fijo, celular o cualquier número de contacto. Si hay varios, sepáralos con coma.
+Para el campo direccion: busca la dirección completa incluyendo calle, carrera, avenida, número, ciudad. En el RUT colombiano aparece en la sección de "Ubicación" o "Dirección"."""
 
     errores = []
 
@@ -859,32 +860,33 @@ html,body,[class*="css"]{{font-family:'Inter','Helvetica Neue',Arial,sans-serif;
     color:#cc0000;font-size:2rem;margin:0.2rem 0 0;font-style:italic;line-height:1.3;display:block;}}
 
 /* HEADER */
-.header-inst{{background:linear-gradient(135deg,#0a0000,#1a0000);border-radius:12px;
-    padding:1.4rem 2rem;margin-bottom:1rem;border:1px solid #cc0000;
-    display:flex;align-items:center;justify-content:space-between;gap:1rem;}}
-.h-logo{{height:70px;width:auto;flex-shrink:0;}}
+.header-inst{{background:#fff;border-radius:12px;
+    padding:1rem 2rem;margin-bottom:1rem;border:2px solid #cc0000;
+    display:flex;align-items:center;justify-content:space-between;gap:1.5rem;
+    box-shadow:0 2px 12px rgba(204,0,0,0.15);}}
+.h-logo{{height:80px;width:auto;flex-shrink:0;}}
 .h-brand{{flex:1;}}
-.h-name{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#fff;font-size:3rem;
-    font-weight:900;letter-spacing:4px;margin:0;line-height:1.1;}}
-.h-acc{{color:#cc0000;-webkit-text-stroke:1.5px #fff;}}
-.h-lema{{font-family:'JennaSue','Georgia',serif;color:#cc4444;font-size:1rem;margin:0.1rem 0;font-style:italic;}}
-.h-sub{{font-family:'Inter',sans-serif;color:#444;font-size:0.65rem;
-    letter-spacing:3px;text-transform:uppercase;margin:0;}}
+.h-name{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;font-size:2.2rem;
+    font-weight:900;letter-spacing:6px;margin:0;line-height:1.2;}}
+.h-acc{{color:#0a0000;}}
+.h-lema{{font-family:'JennaSue','Georgia',serif;color:#cc0000;font-size:1.1rem;margin:0.2rem 0;font-style:italic;}}
+.h-sub{{font-family:'Pax_Oceania_Regular','Georgia',serif;color:#666;font-size:0.75rem;
+    letter-spacing:4px;text-transform:uppercase;margin:0.1rem 0;}}
 .h-user{{text-align:right;flex-shrink:0;}}
-.h-saludo{{font-family:'JennaSue','Georgia',serif;color:#cc6666;font-size:1.1rem;font-style:italic;}}
-.h-nombre{{color:#fff;font-weight:700;font-size:1.05rem;}}
-.h-rol{{color:#cc0000;font-size:0.72rem;letter-spacing:1px;text-transform:uppercase;}}
-.h-fecha{{color:#555;font-size:0.75rem;}}
+.h-saludo{{font-family:'JennaSue','Georgia',serif;color:#cc0000;font-size:1.2rem;font-style:italic;}}
+.h-nombre{{color:#0a0000;font-weight:700;font-size:1.1rem;}}
+.h-rol{{color:#cc0000;font-size:0.8rem;letter-spacing:1px;text-transform:uppercase;}}
+.h-fecha{{color:#888;font-size:0.8rem;margin-top:0.2rem;}}
 
 /* SIDEBAR */
-.sb-wrap{{background:#0f0000;border:1px solid #cc0000;border-radius:10px;
-    padding:1rem;text-align:center;margin-bottom:0.5rem;}}
-.sb-name{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#fff;
-    font-size:1.1rem;font-weight:900;margin:0;letter-spacing:3px;}}
-.sb-acc{{color:#cc0000;}}
-.sb-sub{{font-family:'Inter',sans-serif;color:#cc0000;font-size:0.65rem;
-    margin:0;letter-spacing:2px;text-transform:uppercase;}}
-.sb-lema{{font-family:'JennaSue',sans-serif;color:#cc6666;font-size:0.9rem;margin:0.2rem 0 0;}}
+.sb-wrap{{background:#fff;border:2px solid #cc0000;border-radius:10px;
+    padding:0.8rem;text-align:center;margin-bottom:0.5rem;}}
+.sb-name{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;
+    font-size:1.4rem;font-weight:900;margin:0;letter-spacing:4px;}}
+.sb-acc{{color:#0a0000;}}
+.sb-sub{{font-family:'Pax_Oceania_Regular','Georgia',serif;color:#333;font-size:0.7rem;
+    margin:0.1rem 0;letter-spacing:3px;text-transform:uppercase;}}
+.sb-lema{{font-family:'JennaSue',sans-serif;color:#cc0000;font-size:0.95rem;margin:0.2rem 0 0;}}
 .ub{{background:#1a0000;border:1px solid #cc0000;border-radius:8px;
     padding:0.5rem 0.8rem;margin-bottom:0.5rem;text-align:center;}}
 .ub-n{{color:#ffcccc;font-size:0.9rem;font-weight:700;margin:0;}}
@@ -1015,9 +1017,9 @@ rol_label=ROL_LABEL.get(rol,rol)
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
+    logo_sb = f'<img src="data:image/png;base64,{logo_b64}" style="height:60px;width:auto;margin-bottom:4px;"/><br/>' if logo_b64 else ""
     st.markdown(f"""<div class="sb-wrap">
-        <p class="sb-name">Jandre<span class="sb-acc">x</span>T</p>
-        <p class="sb-sub">Soluciones Integrales</p>
+        {logo_sb}
         <p class="sb-lema">Apasionados por el buen servicio</p>
     </div>
     <div class="ub"><p class="ub-n">👤 {nombre}</p><p class="ub-r">{rol_label}</p></div>""",
@@ -1160,7 +1162,8 @@ def panel_consulta(chat_id, ctx="General"):
         if ok:
             with st.spinner("Procesando respuesta..."):
                 sintesis=juez_fn(pregunta,ok)
-            st.markdown(f'<div class="resp-card"><div class="resp-titulo">🏛️ RESPUESTA JANDREXT · {ctx}</div>{sintesis}</div>',unsafe_allow_html=True)
+            firma = "\n\n---\n*JandrexT Soluciones Integrales · Apasionados por el buen servicio · proyectos@jandrext.com · 317 391 0621*"
+            st.markdown(f'<div class="resp-card"><div class="resp-titulo">🏛️ RESPUESTA JANDREXT · {ctx}</div>{sintesis}{firma}</div>',unsafe_allow_html=True)
             with st.expander("📋 Copiar texto"): st.code(sintesis,language=None)
             cnt=len(supa("mensajes_chat",filtro=f"?chat_id=eq.{chat_id}") or [])
             if cnt==0: supa("chats","PATCH",{"titulo":pregunta[:50]},f"?id=eq.{chat_id}")
@@ -1200,7 +1203,7 @@ if sec=="inicio":
         for p in (supa("proyectos",filtro="?order=creado_en.desc&limit=5") or []):
             st.markdown(f'''<div style="background:#0a0000;border-left:3px solid #cc0000;
                 padding:0.6rem 1rem;margin:0.3rem 0;border-radius:0 6px 6px 0;">
-                <span style="color:#fff;font-weight:600;">{p.get("nombre","")[:30]}</span>
+                <span style="color:#fff;font-weight:600;">{p.get("nombre","")[:40]}</span>
                 <span style="color:#cc0000;font-size:0.8rem;"> · {p.get("linea_servicio","")}</span>
                 </div>''',unsafe_allow_html=True)
     with col_b:
@@ -1209,12 +1212,13 @@ if sec=="inicio":
         if not agenda_hoy:
             st.markdown('<div class="tip">Sin eventos para hoy.</div>',unsafe_allow_html=True)
         for ev in agenda_hoy:
-            hora_ev = ev.get("hora","") or ev.get("hora_inicio","") or ""
-            titulo_ev = ev.get("titulo","") or ev.get("tarea","") or ""
+            if not isinstance(ev, dict): continue
+            hora_ev = str(ev.get("hora","") or ev.get("hora_inicio","") or "")[:5]
+            titulo_ev = str(ev.get("titulo","") or ev.get("tarea","") or "Sin título")[:30]
             st.markdown(f'''<div style="background:#0a0000;border-left:3px solid #cc0000;
                 padding:0.6rem 1rem;margin:0.3rem 0;border-radius:0 6px 6px 0;">
-                <span style="color:#cc0000;font-size:0.85rem;">{str(hora_ev)[:5]}</span>
-                <span style="color:#fff;"> {str(titulo_ev)[:30]}</span>
+                <span style="color:#cc0000;font-size:0.85rem;">{hora_ev}</span>
+                <span style="color:#fff;"> {titulo_ev}</span>
                 </div>''',unsafe_allow_html=True)
 
 elif sec=="chat":
