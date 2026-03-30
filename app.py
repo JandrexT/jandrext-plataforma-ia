@@ -169,19 +169,15 @@ def gemini_fn(p, modelo="gemini-2.0-flash"):
     try:
         t=time.time()
         api_key=get_secret("GOOGLE_API_KEY")
-        if not api_key: return {"ia":"Gemini","icono":"🔴","respuesta":"Sin API key configurada","tiempo":0,"ok":False}
+        if not api_key: return {"ia":"Gemini","icono":"🔴","respuesta":"Sin API key","tiempo":0,"ok":False}
         payload={"contents":[{"parts":[{"text":CONTEXTO+"\n\nConsulta: "+p}]}]}
         url=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
         r=req.post(url,json=payload,timeout=30)
         if r.status_code==200:
             txt=r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
             return {"ia":"Gemini","icono":"🔵","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
-        elif r.status_code==429:
-            return {"ia":"Gemini","icono":"🔴","respuesta":"Cuota diaria agotada — usando otras fuentes","tiempo":0,"ok":False}
-        elif r.status_code==404:
-            return {"ia":"Gemini","icono":"🔴","respuesta":"Modelo no disponible","tiempo":0,"ok":False}
-        return {"ia":"Gemini","icono":"🔴","respuesta":f"Error HTTP {r.status_code}","tiempo":0,"ok":False}
-    except Exception as e: return {"ia":"Gemini","icono":"🔴","respuesta":str(e)[:80],"tiempo":0,"ok":False}
+        return {"ia":"Gemini","icono":"🔴","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
+    except Exception as e: return {"ia":"Gemini","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
 
 def groq_fn(p):
     try:
@@ -195,20 +191,51 @@ def groq_fn(p):
 def venice_fn(p):
     try:
         t=time.time(); h={"Authorization":f"Bearer {os.getenv('VENICE_API_KEY','')}","Content-Type":"application/json"}
-        payload={"model":"llama-3.3-70b","messages":[{"role":"system","content":CONTEXTO},{"role":"user","content":p}],"max_tokens":1500}
-        r=req.post("https://api.venice.ai/api/v1/chat/completions",json=payload,headers=h,timeout=30)
+        r=req.post("https://api.venice.ai/api/v1/chat/completions",
+            json={"model":"llama-3.3-70b","messages":[{"role":"system","content":CONTEXTO},{"role":"user","content":p}],"max_tokens":1500},
+            headers=h,timeout=30)
         if r.status_code==200:
-            data=r.json()
-            # Venice puede devolver choices o result
-            if "choices" in data:
-                txt=data["choices"][0]["message"]["content"].strip()
-            elif "result" in data:
-                txt=str(data["result"]).strip()
-            else:
-                txt=str(data).strip()[:500]
+            d=r.json()
+            txt=d["choices"][0]["message"]["content"].strip() if "choices" in d else str(d.get("result","")).strip()
             return {"ia":"Venice","icono":"🟣","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
         return {"ia":"Venice","icono":"🔴","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
     except Exception as e: return {"ia":"Venice","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
+
+def mistral_fn(p):
+    try:
+        t=time.time(); api_key=get_secret("MISTRAL_API_KEY")
+        if not api_key: return {"ia":"Mistral","icono":"🔴","respuesta":"Sin API key","tiempo":0,"ok":False}
+        h={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"}
+        r=req.post("https://api.mistral.ai/v1/chat/completions",
+            json={"model":"mistral-small-latest","messages":[{"role":"system","content":CONTEXTO},{"role":"user","content":p}],"max_tokens":1500},
+            headers=h,timeout=30)
+        if r.status_code==200:
+            return {"ia":"Mistral","icono":"🟡","respuesta":r.json()["choices"][0]["message"]["content"].strip(),"tiempo":round(time.time()-t,2),"ok":True}
+        return {"ia":"Mistral","icono":"🔴","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
+    except Exception as e: return {"ia":"Mistral","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
+
+def openrouter_fn(p):
+    try:
+        t=time.time(); api_key=get_secret("OPENROUTER_API_KEY")
+        if not api_key: return {"ia":"OpenRouter","icono":"🔴","respuesta":"Sin API key","tiempo":0,"ok":False}
+        h={"Authorization":f"Bearer {api_key}","Content-Type":"application/json",
+           "HTTP-Referer":"https://jandrext-ia.streamlit.app","X-Title":"JandrexT IA"}
+        r=req.post("https://openrouter.ai/api/v1/chat/completions",
+            json={"model":"mistralai/mistral-7b-instruct:free","messages":[{"role":"system","content":CONTEXTO},{"role":"user","content":p}],"max_tokens":1500},
+            headers=h,timeout=30)
+        if r.status_code==200:
+            return {"ia":"OpenRouter","icono":"🔷","respuesta":r.json()["choices"][0]["message"]["content"].strip(),"tiempo":round(time.time()-t,2),"ok":True}
+        return {"ia":"OpenRouter","icono":"🔴","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
+    except Exception as e: return {"ia":"OpenRouter","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
+
+def groq_simple(prompt):
+    try:
+        from groq import Groq
+        r=Groq(api_key=get_secret("GROQ_API_KEY")).chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role":"system","content":CONTEXTO},{"role":"user","content":prompt}],max_tokens=1500)
+        return r.choices[0].message.content.strip()
+    except: return ""
 
 def mistral_fn(p):
     """Mistral AI — gratis via API oficial (mistral-small-latest)"""
@@ -237,7 +264,7 @@ def openrouter_fn(p):
         h={"Authorization":f"Bearer {api_key}","Content-Type":"application/json",
            "HTTP-Referer":"https://jandrext-ia.streamlit.app","X-Title":"JandrexT IA"}
         r=req.post("https://openrouter.ai/api/v1/chat/completions",
-            json={"model":"meta-llama/llama-3.2-3b-instruct:free",
+            json={"model":"meta-llama/llama-3.1-8b-instruct:free",
                   "messages":[{"role":"system","content":CONTEXTO},{"role":"user","content":p}],
                   "max_tokens":1500},
             headers=h,timeout=30)
@@ -369,87 +396,91 @@ pre{{white-space:pre-wrap;line-height:1.6;}}
 
 # ── Micrófono HTML5 nativo ────────────────────────────────────────────────────
 def campo_voz_html5(label, key, height=100, placeholder="Escribe o usa el micrófono..."):
-    """Micrófono que inserta texto directo en la caja — sin flotantes, sin indicadores"""
-    if key not in st.session_state: st.session_state[key] = ""
-    uid = key.replace("-","_").replace(" ","_").replace(".","_")
-    label_lower = label.lower()
+    """Campo de texto con micrófono integrado — botón iniciar/detener"""
+    if key not in st.session_state: st.session_state[key]=""
 
-    mic_html = f"""<div style="margin-bottom:4px;">
+    uid = key.replace("-","_").replace(" ","_")
+
+    mic_html = f"""
+<div style="margin-bottom:6px;">
   <button id="micBtn_{uid}" onclick="toggleMic_{uid}()" style="
-    background:#cc0000;color:#fff;border:none;border-radius:6px;
-    padding:7px 16px;font-size:0.85rem;font-weight:700;cursor:pointer;
-    transition:background 0.2s;letter-spacing:0.5px;">
+    background:#cc0000;color:#fff;border:none;border-radius:8px;
+    padding:8px 18px;font-size:0.9rem;font-weight:700;cursor:pointer;
+    margin-right:8px;transition:all 0.2s;">
     🎤 Iniciar grabación
   </button>
+  <span id="micStatus_{uid}" style="font-size:0.8rem;color:#888;">
+    Listo — Chrome/Edge recomendado
+  </span>
 </div>
 <script>
-(function(){{
-  var rec=null, activo=false, acum='';
-  window['toggleMic_{uid}'] = function(){{
-    var btn=document.getElementById('micBtn_{uid}');
-    if(activo){{ if(rec) rec.stop(); return; }}
-    var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SR){{ alert('Usa Google Chrome o Edge para el micrófono'); return; }}
-    acum='';
-    rec=new SR();
-    rec.lang='es-CO';
-    rec.interimResults=false;
-    rec.continuous=true;
-    rec.maxAlternatives=1;
-    rec.onstart=function(){{
-      activo=true;
-      btn.innerHTML='⏹ Detener';
-      btn.style.background='#7a0000';
-    }};
-    rec.onresult=function(e){{
-      var nuevo='';
-      for(var i=e.resultIndex;i<e.results.length;i++){{
-        if(e.results[i].isFinal) nuevo+=e.results[i][0].transcript+' ';
-      }}
-      if(!nuevo.trim()) return;
-      acum+=nuevo;
-      // Buscar la caja de texto correcta e insertar
-      var tas=window.parent.document.querySelectorAll('textarea');
-      var ok=false;
-      for(var t=0;t<tas.length;t++){{
-        var lbl=(tas[t].getAttribute('aria-label')||'').toLowerCase();
-        var ph=(tas[t].placeholder||'').toLowerCase();
-        if(lbl==='{label_lower}' || lbl.indexOf('{label_lower}')>=0 ||
-           ph.indexOf('consulta')>=0 || ph.indexOf('escribe')>=0 || ph.indexOf('dicta')>=0){{
-          var s=Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype,'value').set;
-          s.call(tas[t], acum.trim());
-          tas[t].dispatchEvent(new Event('input',{{bubbles:true}}));
-          ok=true; break;
-        }}
-      }}
-      if(!ok && tas.length>0){{
-        var s=Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype,'value').set;
-        s.call(tas[0], acum.trim());
-        tas[0].dispatchEvent(new Event('input',{{bubbles:true}}));
-      }}
-    }};
-    rec.onerror=function(e){{
-      activo=false;
-      btn.innerHTML='🎤 Iniciar grabación';
-      btn.style.background='#cc0000';
-      if(e.error!=='no-speech') alert('Error micrófono: '+e.error+'. Permite el acceso en Chrome.');
-    }};
-    rec.onend=function(){{
-      activo=false;
-      btn.innerHTML='🎤 Iniciar grabación';
-      btn.style.background='#cc0000';
-    }};
-    rec.start();
+var micRec_{uid}=null, micActive_{uid}=false;
+function toggleMic_{uid}(){{
+  var btn=document.getElementById('micBtn_{uid}');
+  var sta=document.getElementById('micStatus_{uid}');
+  if(micActive_{uid}){{
+    if(micRec_{uid}) micRec_{uid}.stop();
+    micActive_{uid}=false;
+    btn.textContent='🎤 Iniciar grabación';
+    btn.style.background='#cc0000';
+    sta.textContent='Grabación detenida.';
+    return;
+  }}
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){{ sta.innerHTML='<span style="color:#f87171">⚠️ Usa Google Chrome o Edge</span>'; return; }}
+  micRec_{uid}=new SR();
+  micRec_{uid}.lang='es-CO';
+  micRec_{uid}.interimResults=true;
+  micRec_{uid}.continuous=true;
+  micRec_{uid}.maxAlternatives=1;
+  micRec_{uid}.onstart=function(){{
+    micActive_{uid}=true;
+    btn.textContent='⏹ Detener';
+    btn.style.background='#7a0000';
+    sta.innerHTML='<span style="color:#4ade80">🔴 Grabando... habla ahora</span>';
   }};
-}})();
+  micRec_{uid}.onresult=function(e){{
+    var txt='';
+    for(var i=e.resultIndex;i<e.results.length;i++){{
+      if(e.results[i].isFinal) txt+=e.results[i][0].transcript+' ';
+    }}
+    if(!txt) return;
+    txt=txt.trim();
+    sta.innerHTML='<span style="color:#4ade80">✅ '+txt+'</span>';
+    // Insertar en el textarea de Streamlit
+    var tas=window.parent.document.querySelectorAll('textarea');
+    for(var i=0;i<tas.length;i++){{
+      if(tas[i].getAttribute('aria-label')==='{label}'){{
+        var setter=Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype,'value').set;
+        setter.call(tas[i],txt);
+        tas[i].dispatchEvent(new Event('input',{{bubbles:true}}));
+        break;
+      }}
+    }}
+    micActive_{uid}=false;
+    btn.textContent='🎤 Iniciar grabación';
+    btn.style.background='#cc0000';
+  }};
+  micRec_{uid}.onerror=function(e){{
+    sta.innerHTML='<span style="color:#f87171">Error: '+e.error+' — permite el micrófono en Chrome</span>';
+    micActive_{uid}=false;
+    btn.textContent='🎤 Iniciar grabación';
+    btn.style.background='#cc0000';
+  }};
+  micRec_{uid}.onend=function(){{
+    micActive_{uid}=false;
+    btn.textContent='🎤 Iniciar grabación';
+    btn.style.background='#cc0000';
+  }};
+  micRec_{uid}.start();
+}}
 </script>"""
 
-    st.components.v1.html(mic_html, height=45)
-    val = st.text_area(label, value=st.session_state.get(key,""),
-        height=height, key=f"ta_{key}", placeholder=placeholder)
-    st.session_state[key] = val
+    st.components.v1.html(mic_html, height=55)
+    val=st.text_area(label,value=st.session_state.get(key,""),
+        height=height,key=f"ta_{key}",placeholder=placeholder)
+    st.session_state[key]=val
     return val
-
 
 def panel_voz_global(campos_disponibles, seccion_key):
     """Panel de micrófono usando Web Speech API — botón Iniciar/Detener unificado"""
@@ -475,7 +506,7 @@ def panel_voz_global(campos_disponibles, seccion_key):
   </div>
   <div id="status_{uid}"
     style="color:#888;font-size:12px;margin-bottom:6px;">
-    Listo — Chrome o Edge recomendado
+    Listo para grabar en Chrome/Edge
   </div>
   <div id="preview_{uid}"
     style="background:#0a1a00;border:1px solid #166534;border-radius:6px;
@@ -745,26 +776,24 @@ st.markdown(f"""<style>
 html,body,[class*="css"]{{font-family:'Inter','Helvetica Neue',Arial,sans-serif;}}
 
 /* LOGIN */
-.login-wrap{{max-width:480px;margin:2.5rem auto;background:#0f0000;
+.login-wrap{{max-width:520px;margin:2.5rem auto;background:#0f0000;
     border:1px solid #cc0000;border-radius:16px;padding:2.5rem;}}
-.logo-login-wrap{{background:#fff;border-radius:12px;padding:1.2rem 2rem 0.8rem;
-    display:inline-block;text-align:center;margin-bottom:0.5rem;}}
+.logo-login-wrap{{background:#fff;border-radius:10px;padding:1.8rem 2rem 1rem;
+    display:inline-block;text-align:center;margin-bottom:0.3rem;overflow:visible;}}
 .logo-login-j{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;
-    font-size:8rem;font-weight:900;letter-spacing:0;line-height:0.95;display:inline-block;
-    vertical-align:bottom;-webkit-text-stroke:0;}}
-.logo-login-mid{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;
-    font-size:4rem;font-weight:900;letter-spacing:4px;line-height:0.95;display:inline-block;
-    vertical-align:bottom;-webkit-text-stroke:0;}}
+    font-size:4rem;font-weight:900;letter-spacing:0;line-height:1;display:inline-block;
+    vertical-align:bottom;transform:scaleY(2);transform-origin:bottom center;}}
+.logo-login-mid{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#fff;
+    font-size:4.5rem;font-weight:900;letter-spacing:8px;line-height:1;display:inline-block;
+    -webkit-text-stroke:1.5px #cc0000;vertical-align:baseline;}}
 .logo-login-t{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;
-    font-size:8rem;font-weight:900;letter-spacing:0;line-height:0.95;display:inline-block;
-    vertical-align:bottom;-webkit-text-stroke:0;}}
-.logo-login-sub{{font-family:'Pax_Oceania_Regular','Pax Oceania Regular','Georgia',serif;
-    color:#222;font-size:1.1rem;letter-spacing:6px;text-transform:uppercase;
-    margin:0.4rem 0 0;display:block;}}
-.logo-login-sub .si-grande{{font-size:1.5rem;font-weight:700;vertical-align:baseline;line-height:1;}}
+    font-size:4rem;font-weight:900;letter-spacing:0;line-height:1;display:inline-block;
+    vertical-align:bottom;transform:scaleY(2);transform-origin:bottom center;}}
+.logo-login-sub{{font-family:'Pax_Oceania_Regular','Georgia',serif;color:#333;
+    font-size:1rem;letter-spacing:5px;text-transform:uppercase;margin:0.5rem 0 0;display:block;}}
+.si-grande{{font-size:1.4rem;vertical-align:baseline;line-height:1;}}
 .logo-login-lema{{font-family:'JennaSue','jenna-sue__allfont_net_','Georgia',serif;
-    color:#cc0000;font-size:2.2rem;margin:0.3rem 0 0;font-style:italic;line-height:1.3;
-    display:block;}}
+    color:#cc0000;font-size:2rem;margin:0.2rem 0 0;font-style:italic;line-height:1.3;display:block;}}
 
 /* HEADER */
 .header-inst{{background:linear-gradient(135deg,#0a0000,#1a0000);border-radius:12px;
@@ -866,7 +895,7 @@ if not st.session_state.usuario:
         st.markdown(f"""<div class="login-wrap">
         <div style="text-align:center;margin-bottom:1.5rem;">
             <div class="logo-login-wrap">
-                <div style="line-height:0.95;white-space:nowrap;">
+                <div style="line-height:2.2;white-space:nowrap;padding-bottom:0.5rem;">
                     <span class="logo-login-j">J</span><span class="logo-login-mid">ANDREX</span><span class="logo-login-t">T</span>
                 </div>
                 <p class="logo-login-sub"><span class="si-grande">S</span>OLUCIONES &nbsp;<span class="si-grande">I</span>NTEGRALES</p>
@@ -963,11 +992,33 @@ with st.sidebar:
 
     # IAs: configuración interna, invisible para el usuario
     # Los toggles se gestionan desde Configuración (solo admin)
-    if "ia_usar_g" not in st.session_state: st.session_state.ia_usar_g=True
-    if "ia_usar_r" not in st.session_state: st.session_state.ia_usar_r=True
-    if "ia_usar_v" not in st.session_state: st.session_state.ia_usar_v=False
-    if "ia_usar_m" not in st.session_state: st.session_state.ia_usar_m=False
-    if "ia_usar_o" not in st.session_state: st.session_state.ia_usar_o=False
+    # Cargar configuración de IAs desde Supabase (persistente)
+    if "ia_config_cargada" not in st.session_state:
+        try:
+            cfg=supa("configuracion_ia",filtro="?clave=eq.ia_config")
+            if cfg and isinstance(cfg,list) and cfg:
+                vals=json.loads(cfg[0].get("valor","{}"))
+                st.session_state.ia_usar_g=vals.get("usar_g",True)
+                st.session_state.ia_usar_r=vals.get("usar_r",True)
+                st.session_state.ia_usar_v=vals.get("usar_v",False)
+                st.session_state.ia_usar_m=vals.get("usar_m",True)
+                st.session_state.ia_usar_o=vals.get("usar_o",True)
+                st.session_state.ia_debug_mode=vals.get("debug",False)
+            else:
+                st.session_state.ia_usar_g=True
+                st.session_state.ia_usar_r=True
+                st.session_state.ia_usar_v=False
+                st.session_state.ia_usar_m=True
+                st.session_state.ia_usar_o=True
+                st.session_state.ia_debug_mode=False
+        except:
+            st.session_state.ia_usar_g=True
+            st.session_state.ia_usar_r=True
+            st.session_state.ia_usar_v=False
+            st.session_state.ia_usar_m=True
+            st.session_state.ia_usar_o=True
+            st.session_state.ia_debug_mode=False
+        st.session_state.ia_config_cargada=True
     usar_g=st.session_state.ia_usar_g
     usar_r=st.session_state.ia_usar_r
     usar_v=st.session_state.ia_usar_v
@@ -1018,7 +1069,7 @@ def panel_consulta(chat_id, ctx="General"):
     ik=f"inp_{chat_id}"
     if ik not in st.session_state: st.session_state[ik]=""
 
-    campo_voz_html5("Tu consulta",ik,height=90,placeholder="Escribe o dicta tu consulta técnica...")
+    campo_voz_html5("Tu consulta",ik,height=90,placeholder="Escribe o dicta su consulta técnica...")
     pregunta=st.session_state.get(ik,"")
 
     c1,c2,c3=st.columns([1,2,1])
@@ -1036,13 +1087,13 @@ def panel_consulta(chat_id, ctx="General"):
         with st.spinner("Consultando..."):
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(fns)) as ex:
                 resultados=list(ex.map(lambda f:f(pregunta),fns))
-        cols=st.columns(len(resultados))
-        for i,res in enumerate(resultados):
-            with cols[i]:
-                cls="badge-ok" if res["ok"] else "badge-err"
-                st.markdown(f'<div class="ia-card"><h4>{res["icono"]} {res["ia"]}</h4><span class="{cls}">{"✓" if res["ok"] else "✗"}</span><span class="t-seg"> ⏱{res["tiempo"]}s</span></div>',unsafe_allow_html=True)
-                if res["ok"]:
-                    with st.expander("Ver detalle"): st.write(res["respuesta"])
+        # Solo admin en modo debug ve las tarjetas de IAs
+        if rol=="admin" and st.session_state.get("ia_debug_mode",False):
+            cols=st.columns(len(resultados))
+            for i,res in enumerate(resultados):
+                with cols[i]:
+                    cls="badge-ok" if res["ok"] else "badge-err"
+                    st.markdown(f'<div class="ia-card"><h4>{res["icono"]} {res["ia"]}</h4><span class="{cls}">{"✓" if res["ok"] else "✗"}</span><span class="t-seg"> ⏱{res["tiempo"]}s</span></div>',unsafe_allow_html=True)
         ok=[r for r in resultados if r["ok"]]
         if ok:
             with st.spinner("Procesando respuesta..."):
@@ -1053,6 +1104,7 @@ def panel_consulta(chat_id, ctx="General"):
             if cnt==0: supa("chats","PATCH",{"titulo":pregunta[:50]},f"?id=eq.{chat_id}")
             supa("mensajes_chat","POST",{"chat_id":chat_id,"pregunta":pregunta,
                 "sintesis":sintesis,"ias_usadas":[r["ia"] for r in ok]})
+            st.session_state[ik]=""
             st.session_state[ik]=""
             st.rerun()
     elif btn: st.warning("⚠️ Escribe o dicta una consulta.")
@@ -1143,8 +1195,7 @@ elif sec=="proyectos":
                         if datos.get("razon_social"): st.session_state["pn"]=datos.get("razon_social","")
                         st.success("✅ Datos extraídos")
 
-                pn_val=st.session_state.get("pn","")
-                pn=st.text_input("Nombre del proyecto *",value=pn_val,key="pn")
+                pn=st.text_input("Nombre del proyecto *",key="pn")
                 pa=st.selectbox("Aliado",aliados_nombres,key="pa")
                 pt=st.selectbox("Tipo",["copropiedad","empresa","natural","administracion","interno"],key="pt")
                 pl=st.selectbox("Línea de servicio",LINEAS,key="pl")
@@ -1160,7 +1211,6 @@ elif sec=="proyectos":
                             "meses_garantia_equipos":pge,"meses_garantia_instalacion":pgi,
                             "fecha_garantia_equipos":str(fge),"fecha_garantia_instalacion":str(fgi),
                             "creado_por":u["id"]})
-                        st.session_state["pn"]=""
                         st.success("✅ Proyecto creado"); st.rerun()
 
         buscar_p=st.text_input("🔍 Buscar proyecto",key="bp")
@@ -1701,9 +1751,6 @@ elif sec=="ventas" and tiene_modulo(u,"ventas"):
     st.markdown("## 💼 Asistente de Ventas")
     aliados_list=supa("clientes",filtro="?order=nombre.asc") or []
     aliados_nombres=["Nuevo aliado"]+[a["nombre"] for a in aliados_list]
-    panel_voz_global({
-        "Necesidad del aliado": "ven_nec"
-    }, "ventas")
     c1,c2=st.columns(2)
     with c1:
         v_ali=st.selectbox("Aliado",aliados_nombres)
@@ -1939,7 +1986,19 @@ elif sec=="config" and rol=="admin":
                 st.session_state.ia_usar_v=nuevo_v
                 st.session_state.ia_usar_m=nuevo_m
                 st.session_state.ia_usar_o=nuevo_o
-                st.success("✅ Configuración de IAs guardada")
+                # Persistir en Supabase para que sobreviva recargas
+                vals=json.dumps({"usar_g":nuevo_g,"usar_r":nuevo_r,"usar_v":nuevo_v,
+                                 "usar_m":nuevo_m,"usar_o":nuevo_o,"debug":False})
+                try:
+                    ex=supa("configuracion_ia",filtro="?clave=eq.ia_config")
+                    if ex and isinstance(ex,list) and ex:
+                        supa("configuracion_ia","PATCH",{"valor":vals},"?clave=eq.ia_config")
+                    else:
+                        supa("configuracion_ia","POST",{"clave":"ia_config","valor":vals})
+                    st.session_state.ia_config_cargada=False
+                    st.success("✅ Configuración guardada permanentemente")
+                except:
+                    st.success("✅ Configuración guardada en sesión")
         with col_ia2:
             st.markdown("**Verificar conexión**")
             if st.button("🔍 Probar Gemini 2.0"):
@@ -1977,11 +2036,7 @@ elif sec=="config" and rol=="admin":
                     st.error(f"❌ OpenRouter: {res['respuesta'][:80]}")
                     st.caption("Obtén clave gratis en openrouter.ai → OPENROUTER_API_KEY en Secrets")
         st.markdown("---")
-        st.markdown(f"""**Estado actual:**  
-🔵 Gemini 2.0 Flash: {"✅ Activo" if st.session_state.get("ia_usar_g",True) else "⭕ Inactivo"}  
-🟠 Groq/LLaMA: {"✅ Activo" if st.session_state.get("ia_usar_r",True) else "⭕ Inactivo"}  
-🟣 Venice: {"✅ Activo" if st.session_state.get("ia_usar_v",False) else "⭕ Inactivo"}  
-""")
+
 
     with tab1:
         st.markdown("### 📧 Correo electrónico")
