@@ -159,7 +159,7 @@ Tel: 317 391 0621 | proyectos@jandrext.com | Bogotá, Colombia
 Comportamiento: empático, profesional, práctico. Normas colombianas cuando aplique."""
 
 # ── IAs ───────────────────────────────────────────────────────────────────────
-def gemini_fn(p, modelo="gemini-pro"):
+def gemini_fn(p, modelo="gemini-2.0-flash"):
     try:
         import google.generativeai as genai; t=time.time()
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY",""),
@@ -194,7 +194,7 @@ def juez_fn(pregunta, respuestas):
     try:
         import google.generativeai as genai
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY",""))
-        for m in ["gemini-1.5-flash","gemini-1.5-pro","gemini-pro","gemini-1.0-pro"]:
+        for m in ["gemini-2.0-flash","gemini-2.0-flash","gemini-2.0-flash","gemini-2.0-flash"]:
             try:
                 r=genai.GenerativeModel(m).generate_content(prompt)
                 return r.text.strip()
@@ -212,12 +212,12 @@ def juez_fn(pregunta, respuestas):
         ok=[r for r in respuestas if r["ok"]]
         return ok[0]["respuesta"] if ok else "❌ No hay respuesta disponible"
 
-def ia_generar(prompt, modelo="gemini-1.5-flash"):
+def ia_generar(prompt, modelo="gemini-2.0-flash"):
     # Intentar Gemini con varios modelos
     try:
         import google.generativeai as genai
         genai.configure(api_key=os.getenv("GOOGLE_API_KEY",""))
-        for m in ["gemini-1.5-flash","gemini-1.5-pro","gemini-pro","gemini-1.0-pro"]:
+        for m in ["gemini-2.0-flash","gemini-2.0-flash","gemini-2.0-flash","gemini-2.0-flash"]:
             try:
                 r=genai.GenerativeModel(m).generate_content(CONTEXTO+"\n\n"+prompt)
                 return r.text.strip()
@@ -240,7 +240,7 @@ def ia_extraer_doc(b64, tipo="imagen"):
         prompt="""Extrae datos de este documento. Devuelve SOLO JSON válido sin markdown:
 {"razon_social":"","nit":"","direccion":"","municipio":"","departamento":"",
 "telefono":"","email":"","contacto":"","cargo_contacto":"","responsabilidad_fiscal":"","regimen_fiscal":""}"""
-        model=genai.GenerativeModel("gemini-pro")
+        model=genai.GenerativeModel("gemini-2.0-flash")
         mime="application/pdf" if tipo=="pdf" else "image/jpeg"
         r=model.generate_content([prompt,{"inline_data":{"mime_type":mime,"data":b64}}])
         txt=r.text.strip().replace("```json","").replace("```","").strip()
