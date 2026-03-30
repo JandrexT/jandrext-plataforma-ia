@@ -369,7 +369,7 @@ Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones."""
             h = {"Authorization":f"Bearer {api_key}","Content-Type":"application/json",
                  "HTTP-Referer":"https://jandrext-ia.streamlit.app","X-Title":"JandrexT IA"}
             mime = "application/pdf" if tipo=="pdf" else "image/jpeg"
-            payload = {"model":"meta-llama/llama-3.2-11b-vision-instruct:free",
+            payload = {"model":"qwen/qwen2.5-vl-72b-instruct:free",
                        "messages":[{"role":"user","content":[
                            {"type":"text","text":prompt_json},
                            {"type":"image_url","image_url":{"url":f"data:{mime};base64,{b64}"}}
@@ -389,22 +389,28 @@ Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones."""
     # Intento 3: Para PDFs — extraer texto y enviar a Groq (no requiere visión)
     if tipo == "pdf":
         try:
-            import base64 as b64mod
+            import base64 as b64mod, io
             pdf_bytes = b64mod.b64decode(b64)
-            # Intentar extraer texto del PDF con pypdf
+            texto_pdf = ""
+            # Intento 1: pypdf
             try:
-                import io
                 from pypdf import PdfReader
                 reader = PdfReader(io.BytesIO(pdf_bytes))
-                texto_pdf = " ".join(p.extract_text() or "" for p in reader.pages[:3])
-                texto_pdf = texto_pdf[:3000]  # Limitar tamaño
-            except:
+                texto_pdf = " ".join(p.extract_text() or "" for p in reader.pages[:4])[:4000]
+            except: pass
+            # Intento 2: pdfminer
+            if not texto_pdf:
                 try:
-                    import pdfplumber, io
-                    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-                        texto_pdf = " ".join(p.extract_text() or "" for p in pdf.pages[:3])[:3000]
-                except:
-                    texto_pdf = ""
+                    from pdfminer.high_level import extract_text as pdfminer_extract
+                    texto_pdf = pdfminer_extract(io.BytesIO(pdf_bytes))[:4000]
+                except: pass
+            # Intento 3: PyMuPDF
+            if not texto_pdf:
+                try:
+                    import fitz
+                    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                    texto_pdf = " ".join(page.get_text() for page in doc)[:4000]
+                except: pass
 
             if texto_pdf and len(texto_pdf) > 50:
                 from groq import Groq
@@ -817,7 +823,7 @@ def panel_voz_global(campos_disponibles, seccion_key):
             st.info("Presiona el botón y habla claramente en Chrome.")
 
 # ── Config página ─────────────────────────────────────────────────────────────
-st.set_page_config(page_title="JandrexT | Plataforma v15",page_icon="🔒",
+st.set_page_config(page_title="JandrexT | Plataforma v16",page_icon="🔒",
     layout="wide",initial_sidebar_state="expanded")
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
@@ -937,7 +943,7 @@ div[data-testid="stSidebar"] .stButton>button:hover{{
 </style>""", unsafe_allow_html=True)
 
 # ── Session state ─────────────────────────────────────────────────────────────
-for k,v in [("usuario",None),("seccion","chat"),("chat_activo",None),
+for k,v in [("usuario",None),("seccion","inicio"),("chat_activo",None),
             ("proy_activo",None),("proy_nombre",""),("sc_activo",None),
             ("confirm_logout",False)]:
     if k not in st.session_state: st.session_state[k]=v
@@ -948,14 +954,13 @@ for k,v in [("usuario",None),("seccion","chat"),("chat_activo",None),
 if not st.session_state.usuario:
     c1,c2,c3=st.columns([1,2,1])
     with c2:
+        if logo_b64:
+            logo_login = f'<img src="data:image/png;base64,{logo_b64}" style="height:140px;width:auto;display:block;margin:0 auto 0.5rem;filter:drop-shadow(0 2px 8px rgba(0,0,0,0.3));"/>' 
+        else:
+            logo_login = '<div style="font-family:sans-serif;color:#cc0000;font-size:3rem;font-weight:900;text-align:center;">JandrexT</div>'
         st.markdown(f"""<div class="login-wrap">
         <div style="text-align:center;margin-bottom:1.5rem;">
-            <div class="logo-login-wrap">
-                <div style="line-height:2.2;white-space:nowrap;padding-bottom:0.5rem;">
-                    <span class="logo-login-j">J</span><span class="logo-login-mid">ANDREX</span><span class="logo-login-t">T</span>
-                </div>
-                <p class="logo-login-sub"><span class="si-grande">S</span>OLUCIONES &nbsp;<span class="si-grande">I</span>NTEGRALES</p>
-            </div>
+            {logo_login}
             <p class="logo-login-lema">Apasionados por el buen servicio</p>
         </div></div>""", unsafe_allow_html=True)
         st.markdown("### 🔐 Iniciar sesión")
@@ -1025,7 +1030,7 @@ with st.sidebar:
     elif rol=="tecnico":
         SECS=[("📅","agenda","Mi Agenda"),("👥","asistencia","Mi Asistencia"),("💬","chat","Consultas")]
     else:
-        SECS=[("💬","chat","Chats"),("📁","proyectos","Proyectos"),
+        SECS=[("🏠","inicio","Inicio"),("💬","chat","Chats"),("📁","proyectos","Proyectos"),
               ("📅","agenda","Agenda"),("👥","asistencia","Asistencia"),
               ("📚","biblioteca","Biblioteca"),("📄","documentos","Documentos"),
               ("📖","manuales","Manuales"),("💼","ventas","Ventas"),
@@ -1096,7 +1101,7 @@ st.markdown(f"""<div class="header-inst">
     <div class="h-brand">
         <p class="h-name">Jandre<span class="h-acc">x</span>T</p>
         <p class="h-lema">Apasionados por el buen servicio</p>
-        <p class="h-sub">Soluciones Integrales · Plataforma v15.0</p>
+        <p class="h-sub">Soluciones Integrales · Plataforma v16.0</p>
     </div>
     <div class="h-user">
         <div class="h-saludo">{saludo},</div>
@@ -1168,7 +1173,48 @@ def panel_consulta(chat_id, ctx="General"):
 # ══════════════════════════════════════════════════════════════════════════════
 # CHATS
 # ══════════════════════════════════════════════════════════════════════════════
-if sec=="chat":
+if sec=="inicio":
+    st.markdown("## 🏠 Panel Principal")
+    col1,col2,col3,col4=st.columns(4)
+    try:
+        total_p=len(supa("proyectos") or [])
+        total_a=len(supa("clientes") or [])
+        hoy=ahora().strftime("%Y-%m-%d")
+        eventos_hoy=len(supa("agenda",filtro=f"?fecha=eq.{hoy}") or [])
+        total_u=len(supa("usuarios",filtro="?activo=eq.true") or [])
+    except: total_p=total_a=eventos_hoy=total_u=0
+    for col,num,label in zip([col1,col2,col3,col4],
+        [total_p,total_a,eventos_hoy,total_u],
+        ["Proyectos","Aliados","Eventos hoy","Usuarios activos"]):
+        with col:
+            st.markdown(f'''<div style="background:#0f0000;border:1px solid #cc0000;
+                border-radius:10px;padding:1.2rem;text-align:center;">
+                <div style="font-size:2.5rem;font-weight:900;color:#cc0000;">{num}</div>
+                <div style="color:#ccc;font-size:0.85rem;">{label}</div></div>''',
+                unsafe_allow_html=True)
+    st.markdown("<br>",unsafe_allow_html=True)
+    col_a,col_b=st.columns(2)
+    with col_a:
+        st.markdown("### 📁 Proyectos recientes")
+        for p in (supa("proyectos",filtro="?order=creado_en.desc&limit=5") or []):
+            st.markdown(f'''<div style="background:#0a0000;border-left:3px solid #cc0000;
+                padding:0.6rem 1rem;margin:0.3rem 0;border-radius:0 6px 6px 0;">
+                <span style="color:#fff;font-weight:600;">{p.get("nombre","")[:30]}</span>
+                <span style="color:#cc0000;font-size:0.8rem;"> · {p.get("linea_servicio","")}</span>
+                </div>''',unsafe_allow_html=True)
+    with col_b:
+        st.markdown("### 📅 Agenda de hoy")
+        agenda_hoy=supa("agenda",filtro=f"?fecha=eq.{hoy}&order=hora.asc") or []
+        if not agenda_hoy:
+            st.markdown('<div class="tip">Sin eventos para hoy.</div>',unsafe_allow_html=True)
+        for ev in agenda_hoy:
+            st.markdown(f'''<div style="background:#0a0000;border-left:3px solid #cc0000;
+                padding:0.6rem 1rem;margin:0.3rem 0;border-radius:0 6px 6px 0;">
+                <span style="color:#cc0000;font-size:0.85rem;">{ev.get("hora","")}</span>
+                <span style="color:#fff;"> {ev.get("titulo","")[:30]}</span>
+                </div>''',unsafe_allow_html=True)
+
+elif sec=="chat":
     st.markdown("## 💬 Chats")
     proyectos_list=supa("proyectos",filtro="?order=nombre.asc") or []
     proy_nombres=["Sin proyecto"]+[p["nombre"] for p in proyectos_list]
@@ -2161,12 +2207,12 @@ elif sec=="config" and rol=="admin":
         c1.metric("Aliados",total_a)
         c2.metric("Tareas pendientes",total_t)
         c3.metric("Manuales",total_m)
-        st.caption(f"Última actualización: {fecha_str()} | Plataforma v15.0 | JandrexT Soluciones Integrales")
+        st.caption(f"Última actualización: {fecha_str()} | Plataforma v16.0 | JandrexT Soluciones Integrales")
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown(f"""<div class="footer-inst">
     <span class="footer-acc">JandrexT</span> Soluciones Integrales &nbsp;·&nbsp;
     Director de Proyectos: <span class="footer-acc">Andrés Tapiero</span> &nbsp;·&nbsp;
-    Plataforma v15.0 &nbsp;·&nbsp; 🔒 Sistema Interno<br>
+    Plataforma v16.0 &nbsp;·&nbsp; 🔒 Sistema Interno<br>
     <span class="footer-lema-j">Apasionados por el buen servicio</span>
 </div>""", unsafe_allow_html=True)
