@@ -326,19 +326,23 @@ def groq_simple(prompt):
     except Exception as e: return f"❌ Error generando respuesta: {e}"
 
 def ia_extraer_doc(b64, tipo="imagen"):
-    """Extrae datos de RUT/documento con Gemini vision + fallback OpenRouter vision"""
-    prompt_json = """Extrae los datos de este documento colombiano (RUT, NIT, cámara de comercio o similar).
-Devuelve SOLO JSON válido sin texto adicional ni markdown:
-{"razon_social":"","nit":"","direccion":"","municipio":"","departamento":"","telefono":"","email":"","contacto":"","cargo_contacto":"","responsabilidad_fiscal":"","regimen_fiscal":""}"""
-    
+    """Extrae datos de RUT con Gemini vision, OpenRouter vision, o Groq desde texto PDF"""
+    prompt_json = """Eres un asistente que extrae datos de documentos colombianos (RUT, NIT, cámara de comercio).
+Analiza el documento y devuelve SOLO un JSON válido con esta estructura exacta, sin texto adicional ni markdown:
+{"razon_social":"","nit":"","direccion":"","municipio":"","departamento":"","telefono":"","email":"","contacto":"","cargo_contacto":"","responsabilidad_fiscal":"","regimen_fiscal":""}
+Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones."""
+
+    errores = []
+
     def parsear_json(txt):
+        if not txt: return {}
         txt = txt.replace("```json","").replace("```","").strip()
         s = txt.find("{"); e = txt.rfind("}")+1
         if s>=0 and e>0:
             try: return json.loads(txt[s:e])
             except: pass
         return {}
-    
+
     # Intento 1: Gemini 2.0 flash con visión
     try:
         api_key = get_secret("GOOGLE_API_KEY")
@@ -346,14 +350,19 @@ Devuelve SOLO JSON válido sin texto adicional ni markdown:
             mime = "application/pdf" if tipo=="pdf" else "image/jpeg"
             payload = {"contents":[{"parts":[{"text":prompt_json},{"inline_data":{"mime_type":mime,"data":b64}}]}]}
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-            r = req.post(url, json=payload, timeout=40)
+            r = req.post(url, json=payload, timeout=45)
             if r.status_code == 200:
                 txt = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                resultado = parsear_json(txt)
-                if resultado.get("nit") or resultado.get("razon_social"): return resultado
-    except: pass
-    
-    # Intento 2: OpenRouter con modelo de visión gratuito
+                res = parsear_json(txt)
+                if res.get("nit") or res.get("razon_social"): return res
+            else:
+                errores.append(f"Gemini HTTP {r.status_code}")
+        else:
+            errores.append("Gemini sin API key")
+    except Exception as e:
+        errores.append(f"Gemini error: {str(e)[:50]}")
+
+    # Intento 2: OpenRouter con visión gratuita
     try:
         api_key = get_secret("OPENROUTER_API_KEY")
         if api_key:
@@ -365,14 +374,61 @@ Devuelve SOLO JSON válido sin texto adicional ni markdown:
                            {"type":"text","text":prompt_json},
                            {"type":"image_url","image_url":{"url":f"data:{mime};base64,{b64}"}}
                        ]}],"max_tokens":600}
-            r = req.post("https://openrouter.ai/api/v1/chat/completions", headers=h, json=payload, timeout=40)
+            r = req.post("https://openrouter.ai/api/v1/chat/completions",headers=h,json=payload,timeout=45)
             if r.status_code == 200:
                 txt = r.json()["choices"][0]["message"]["content"].strip()
-                resultado = parsear_json(txt)
-                if resultado: return resultado
-    except: pass
-    
-    return {}
+                res = parsear_json(txt)
+                if res.get("nit") or res.get("razon_social"): return res
+            else:
+                errores.append(f"OpenRouter HTTP {r.status_code}")
+        else:
+            errores.append("OpenRouter sin API key")
+    except Exception as e:
+        errores.append(f"OpenRouter error: {str(e)[:50]}")
+
+    # Intento 3: Para PDFs — extraer texto y enviar a Groq (no requiere visión)
+    if tipo == "pdf":
+        try:
+            import base64 as b64mod
+            pdf_bytes = b64mod.b64decode(b64)
+            # Intentar extraer texto del PDF con pypdf
+            try:
+                import io
+                from pypdf import PdfReader
+                reader = PdfReader(io.BytesIO(pdf_bytes))
+                texto_pdf = " ".join(p.extract_text() or "" for p in reader.pages[:3])
+                texto_pdf = texto_pdf[:3000]  # Limitar tamaño
+            except:
+                try:
+                    import pdfplumber, io
+                    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                        texto_pdf = " ".join(p.extract_text() or "" for p in pdf.pages[:3])[:3000]
+                except:
+                    texto_pdf = ""
+
+            if texto_pdf and len(texto_pdf) > 50:
+                from groq import Groq
+                prompt_groq = f"""Extrae los datos de este texto de un documento colombiano (RUT/NIT).
+Devuelve SOLO JSON válido sin markdown:
+{{"razon_social":"","nit":"","direccion":"","municipio":"","departamento":"","telefono":"","email":"","contacto":"","cargo_contacto":"","responsabilidad_fiscal":"","regimen_fiscal":""}}
+
+Texto del documento:
+{texto_pdf}"""
+                r = Groq(api_key=get_secret("GROQ_API_KEY")).chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role":"user","content":prompt_groq}],
+                    max_tokens=500)
+                txt = r.choices[0].message.content.strip()
+                res = parsear_json(txt)
+                if res.get("nit") or res.get("razon_social"): return res
+                errores.append("Groq no encontró datos en el texto")
+            else:
+                errores.append("No se pudo extraer texto del PDF")
+        except Exception as e:
+            errores.append(f"Groq PDF: {str(e)[:50]}")
+
+    # Retornar errores para mostrar al usuario
+    return {"_errores": " | ".join(errores)} if errores else {}
 
 def generar_pdf_html(titulo, contenido):
     logo_tag=f'<img src="data:image/png;base64,{logo_b64}" style="height:55px;"/>' if logo_b64 else ""
@@ -1538,11 +1594,16 @@ elif sec=="aliados":
                     b64c=base64.b64encode(arch.read()).decode()
                     tipo="pdf" if arch.type=="application/pdf" else "imagen"
                     datos=ia_extraer_doc(b64c,tipo)
-                if datos:
+                if datos and not datos.get("_errores"):
                     for k,v in datos.items():
-                        if v: st.session_state[f"ali_{k}"]=v
-                    st.success("✅ Datos extraídos automáticamente")
+                        if v and k != "_errores": st.session_state[f"ali_{k}"]=v
+                    st.success("✅ Datos extraídos — revise y complete si falta algo")
                     st.rerun()
+                elif datos.get("_errores"):
+                    st.error(f"⚠️ No se pudo extraer: {datos['_errores']}")
+                    st.info("💡 Configure GOOGLE_API_KEY o OPENROUTER_API_KEY en Streamlit Secrets para habilitar la extracción automática.")
+                else:
+                    st.warning("⚠️ No se encontraron datos en el documento. Intente con una imagen más clara o ingrese los datos manualmente.")
 
         def ali_field(k,label,placeholder=""):
             val=st.session_state.get(f"ali_{k}","")
