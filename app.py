@@ -30,7 +30,9 @@ def get_font_b64(fname):
 
 FONTS_CSS = (get_font_b64("Disclaimer-Plain.otf") +
              get_font_b64("Disclaimer-Classic.otf") +
-             get_font_b64("JennaSue.ttf"))
+             get_font_b64("JennaSue.ttf") +
+             get_font_b64("jenna-sue__allfont_net_.ttf") +
+             get_font_b64("Pax_Oceania_Regular.ttf"))
 
 # ── Logo ──────────────────────────────────────────────────────────────────────
 logo_b64 = None
@@ -167,15 +169,19 @@ def gemini_fn(p, modelo="gemini-2.0-flash"):
     try:
         t=time.time()
         api_key=get_secret("GOOGLE_API_KEY")
-        if not api_key: return {"ia":"Gemini","icono":"🔴","respuesta":"Sin API key","tiempo":0,"ok":False}
+        if not api_key: return {"ia":"Gemini","icono":"🔴","respuesta":"Sin API key configurada","tiempo":0,"ok":False}
         payload={"contents":[{"parts":[{"text":CONTEXTO+"\n\nConsulta: "+p}]}]}
         url=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
         r=req.post(url,json=payload,timeout=30)
         if r.status_code==200:
             txt=r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
             return {"ia":"Gemini","icono":"🔵","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
-        return {"ia":"Gemini","icono":"🔴","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
-    except Exception as e: return {"ia":"Gemini","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
+        elif r.status_code==429:
+            return {"ia":"Gemini","icono":"🔴","respuesta":"Cuota diaria agotada — usando otras fuentes","tiempo":0,"ok":False}
+        elif r.status_code==404:
+            return {"ia":"Gemini","icono":"🔴","respuesta":"Modelo no disponible","tiempo":0,"ok":False}
+        return {"ia":"Gemini","icono":"🔴","respuesta":f"Error HTTP {r.status_code}","tiempo":0,"ok":False}
+    except Exception as e: return {"ia":"Gemini","icono":"🔴","respuesta":str(e)[:80],"tiempo":0,"ok":False}
 
 def groq_fn(p):
     try:
@@ -189,10 +195,19 @@ def groq_fn(p):
 def venice_fn(p):
     try:
         t=time.time(); h={"Authorization":f"Bearer {os.getenv('VENICE_API_KEY','')}","Content-Type":"application/json"}
-        r=req.post("https://api.venice.ai/api/v1/chat/completions",
-            json={"model":"llama-3.3-70b","messages":[{"role":"system","content":CONTEXTO},{"role":"user","content":p}],"max_tokens":1500},
-            headers=h,timeout=30)
-        return {"ia":"Venice","icono":"🟣","respuesta":r.json()["choices"][0]["message"]["content"].strip(),"tiempo":round(time.time()-t,2),"ok":True}
+        payload={"model":"llama-3.3-70b","messages":[{"role":"system","content":CONTEXTO},{"role":"user","content":p}],"max_tokens":1500}
+        r=req.post("https://api.venice.ai/api/v1/chat/completions",json=payload,headers=h,timeout=30)
+        if r.status_code==200:
+            data=r.json()
+            # Venice puede devolver choices o result
+            if "choices" in data:
+                txt=data["choices"][0]["message"]["content"].strip()
+            elif "result" in data:
+                txt=str(data["result"]).strip()
+            else:
+                txt=str(data).strip()[:500]
+            return {"ia":"Venice","icono":"🟣","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
+        return {"ia":"Venice","icono":"🔴","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
     except Exception as e: return {"ia":"Venice","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
 
 def mistral_fn(p):
@@ -222,7 +237,7 @@ def openrouter_fn(p):
         h={"Authorization":f"Bearer {api_key}","Content-Type":"application/json",
            "HTTP-Referer":"https://jandrext-ia.streamlit.app","X-Title":"JandrexT IA"}
         r=req.post("https://openrouter.ai/api/v1/chat/completions",
-            json={"model":"meta-llama/llama-3.1-8b-instruct:free",
+            json={"model":"meta-llama/llama-3.2-3b-instruct:free",
                   "messages":[{"role":"system","content":CONTEXTO},{"role":"user","content":p}],
                   "max_tokens":1500},
             headers=h,timeout=30)
@@ -354,91 +369,87 @@ pre{{white-space:pre-wrap;line-height:1.6;}}
 
 # ── Micrófono HTML5 nativo ────────────────────────────────────────────────────
 def campo_voz_html5(label, key, height=100, placeholder="Escribe o usa el micrófono..."):
-    """Campo de texto con micrófono integrado — botón iniciar/detener"""
-    if key not in st.session_state: st.session_state[key]=""
+    """Micrófono que inserta texto directo en la caja — sin flotantes, sin indicadores"""
+    if key not in st.session_state: st.session_state[key] = ""
+    uid = key.replace("-","_").replace(" ","_").replace(".","_")
+    label_lower = label.lower()
 
-    uid = key.replace("-","_").replace(" ","_")
-
-    mic_html = f"""
-<div style="margin-bottom:6px;">
+    mic_html = f"""<div style="margin-bottom:4px;">
   <button id="micBtn_{uid}" onclick="toggleMic_{uid}()" style="
-    background:#cc0000;color:#fff;border:none;border-radius:8px;
-    padding:8px 18px;font-size:0.9rem;font-weight:700;cursor:pointer;
-    margin-right:8px;transition:all 0.2s;">
+    background:#cc0000;color:#fff;border:none;border-radius:6px;
+    padding:7px 16px;font-size:0.85rem;font-weight:700;cursor:pointer;
+    transition:background 0.2s;letter-spacing:0.5px;">
     🎤 Iniciar grabación
   </button>
-  <span id="micStatus_{uid}" style="font-size:0.8rem;color:#888;">
-    Listo — Chrome/Edge recomendado
-  </span>
 </div>
 <script>
-var micRec_{uid}=null, micActive_{uid}=false;
-function toggleMic_{uid}(){{
-  var btn=document.getElementById('micBtn_{uid}');
-  var sta=document.getElementById('micStatus_{uid}');
-  if(micActive_{uid}){{
-    if(micRec_{uid}) micRec_{uid}.stop();
-    micActive_{uid}=false;
-    btn.textContent='🎤 Iniciar grabación';
-    btn.style.background='#cc0000';
-    sta.textContent='Grabación detenida.';
-    return;
-  }}
-  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  if(!SR){{ sta.innerHTML='<span style="color:#f87171">⚠️ Usa Google Chrome o Edge</span>'; return; }}
-  micRec_{uid}=new SR();
-  micRec_{uid}.lang='es-CO';
-  micRec_{uid}.interimResults=true;
-  micRec_{uid}.continuous=true;
-  micRec_{uid}.maxAlternatives=1;
-  micRec_{uid}.onstart=function(){{
-    micActive_{uid}=true;
-    btn.textContent='⏹ Detener';
-    btn.style.background='#7a0000';
-    sta.innerHTML='<span style="color:#4ade80">🔴 Grabando... habla ahora</span>';
-  }};
-  micRec_{uid}.onresult=function(e){{
-    var txt='';
-    for(var i=e.resultIndex;i<e.results.length;i++){{
-      if(e.results[i].isFinal) txt+=e.results[i][0].transcript+' ';
-    }}
-    if(!txt) return;
-    txt=txt.trim();
-    sta.innerHTML='<span style="color:#4ade80">✅ '+txt+'</span>';
-    // Insertar en el textarea de Streamlit
-    var tas=window.parent.document.querySelectorAll('textarea');
-    for(var i=0;i<tas.length;i++){{
-      if(tas[i].getAttribute('aria-label')==='{label}'){{
-        var setter=Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype,'value').set;
-        setter.call(tas[i],txt);
-        tas[i].dispatchEvent(new Event('input',{{bubbles:true}}));
-        break;
+(function(){{
+  var rec=null, activo=false, acum='';
+  window['toggleMic_{uid}'] = function(){{
+    var btn=document.getElementById('micBtn_{uid}');
+    if(activo){{ if(rec) rec.stop(); return; }}
+    var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!SR){{ alert('Usa Google Chrome o Edge para el micrófono'); return; }}
+    acum='';
+    rec=new SR();
+    rec.lang='es-CO';
+    rec.interimResults=false;
+    rec.continuous=true;
+    rec.maxAlternatives=1;
+    rec.onstart=function(){{
+      activo=true;
+      btn.innerHTML='⏹ Detener';
+      btn.style.background='#7a0000';
+    }};
+    rec.onresult=function(e){{
+      var nuevo='';
+      for(var i=e.resultIndex;i<e.results.length;i++){{
+        if(e.results[i].isFinal) nuevo+=e.results[i][0].transcript+' ';
       }}
-    }}
-    micActive_{uid}=false;
-    btn.textContent='🎤 Iniciar grabación';
-    btn.style.background='#cc0000';
+      if(!nuevo.trim()) return;
+      acum+=nuevo;
+      // Buscar la caja de texto correcta e insertar
+      var tas=window.parent.document.querySelectorAll('textarea');
+      var ok=false;
+      for(var t=0;t<tas.length;t++){{
+        var lbl=(tas[t].getAttribute('aria-label')||'').toLowerCase();
+        var ph=(tas[t].placeholder||'').toLowerCase();
+        if(lbl==='{label_lower}' || lbl.indexOf('{label_lower}')>=0 ||
+           ph.indexOf('consulta')>=0 || ph.indexOf('escribe')>=0 || ph.indexOf('dicta')>=0){{
+          var s=Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype,'value').set;
+          s.call(tas[t], acum.trim());
+          tas[t].dispatchEvent(new Event('input',{{bubbles:true}}));
+          ok=true; break;
+        }}
+      }}
+      if(!ok && tas.length>0){{
+        var s=Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype,'value').set;
+        s.call(tas[0], acum.trim());
+        tas[0].dispatchEvent(new Event('input',{{bubbles:true}}));
+      }}
+    }};
+    rec.onerror=function(e){{
+      activo=false;
+      btn.innerHTML='🎤 Iniciar grabación';
+      btn.style.background='#cc0000';
+      if(e.error!=='no-speech') alert('Error micrófono: '+e.error+'. Permite el acceso en Chrome.');
+    }};
+    rec.onend=function(){{
+      activo=false;
+      btn.innerHTML='🎤 Iniciar grabación';
+      btn.style.background='#cc0000';
+    }};
+    rec.start();
   }};
-  micRec_{uid}.onerror=function(e){{
-    sta.innerHTML='<span style="color:#f87171">Error: '+e.error+' — permite el micrófono en Chrome</span>';
-    micActive_{uid}=false;
-    btn.textContent='🎤 Iniciar grabación';
-    btn.style.background='#cc0000';
-  }};
-  micRec_{uid}.onend=function(){{
-    micActive_{uid}=false;
-    btn.textContent='🎤 Iniciar grabación';
-    btn.style.background='#cc0000';
-  }};
-  micRec_{uid}.start();
-}}
+}})();
 </script>"""
 
-    st.components.v1.html(mic_html, height=55)
-    val=st.text_area(label,value=st.session_state.get(key,""),
-        height=height,key=f"ta_{key}",placeholder=placeholder)
-    st.session_state[key]=val
+    st.components.v1.html(mic_html, height=45)
+    val = st.text_area(label, value=st.session_state.get(key,""),
+        height=height, key=f"ta_{key}", placeholder=placeholder)
+    st.session_state[key] = val
     return val
+
 
 def panel_voz_global(campos_disponibles, seccion_key):
     """Panel de micrófono usando Web Speech API — botón Iniciar/Detener unificado"""
@@ -464,7 +475,7 @@ def panel_voz_global(campos_disponibles, seccion_key):
   </div>
   <div id="status_{uid}"
     style="color:#888;font-size:12px;margin-bottom:6px;">
-    Listo para grabar en Chrome/Edge
+    Listo — Chrome o Edge recomendado
   </div>
   <div id="preview_{uid}"
     style="background:#0a1a00;border:1px solid #166534;border-radius:6px;
@@ -736,19 +747,24 @@ html,body,[class*="css"]{{font-family:'Inter','Helvetica Neue',Arial,sans-serif;
 /* LOGIN */
 .login-wrap{{max-width:480px;margin:2.5rem auto;background:#0f0000;
     border:1px solid #cc0000;border-radius:16px;padding:2.5rem;}}
+.logo-login-wrap{{background:#fff;border-radius:12px;padding:1.2rem 2rem 0.8rem;
+    display:inline-block;text-align:center;margin-bottom:0.5rem;}}
 .logo-login-j{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;
-    font-size:9rem;font-weight:900;letter-spacing:0;line-height:1;display:inline-block;
-    -webkit-text-stroke:2px #fff;vertical-align:baseline;}}
-.logo-login-mid{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#fff;
-    font-size:4.5rem;font-weight:900;letter-spacing:8px;line-height:1;display:inline-block;
-    -webkit-text-stroke:1.5px #cc0000;vertical-align:baseline;}}
+    font-size:8rem;font-weight:900;letter-spacing:0;line-height:0.95;display:inline-block;
+    vertical-align:bottom;-webkit-text-stroke:0;}}
+.logo-login-mid{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;
+    font-size:4rem;font-weight:900;letter-spacing:4px;line-height:0.95;display:inline-block;
+    vertical-align:bottom;-webkit-text-stroke:0;}}
 .logo-login-t{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;
-    font-size:9rem;font-weight:900;letter-spacing:0;line-height:1;display:inline-block;
-    -webkit-text-stroke:2px #fff;vertical-align:baseline;}}
-.logo-login-sub{{font-family:'Inter',sans-serif;color:#666;font-size:0.65rem;
-    letter-spacing:4px;text-transform:uppercase;margin:0.3rem 0 0;}}
-.logo-login-lema{{font-family:'JennaSue','Georgia',serif;color:#cc4444;
-    font-size:3.8rem;margin:0.3rem 0;font-style:italic;line-height:1.2;}}
+    font-size:8rem;font-weight:900;letter-spacing:0;line-height:0.95;display:inline-block;
+    vertical-align:bottom;-webkit-text-stroke:0;}}
+.logo-login-sub{{font-family:'Pax_Oceania_Regular','Pax Oceania Regular','Georgia',serif;
+    color:#222;font-size:1.1rem;letter-spacing:6px;text-transform:uppercase;
+    margin:0.4rem 0 0;display:block;}}
+.logo-login-sub .si-grande{{font-size:1.5rem;font-weight:700;vertical-align:baseline;line-height:1;}}
+.logo-login-lema{{font-family:'JennaSue','jenna-sue__allfont_net_','Georgia',serif;
+    color:#cc0000;font-size:2.2rem;margin:0.3rem 0 0;font-style:italic;line-height:1.3;
+    display:block;}}
 
 /* HEADER */
 .header-inst{{background:linear-gradient(135deg,#0a0000,#1a0000);border-radius:12px;
@@ -848,13 +864,13 @@ if not st.session_state.usuario:
     c1,c2,c3=st.columns([1,2,1])
     with c2:
         st.markdown(f"""<div class="login-wrap">
-        <div style="text-align:center;margin-bottom:1.8rem;">
-            <div style="line-height:1.2;">
-                <span class="logo-login-j">J</span>
-                <span class="logo-login-mid">ANDREX</span>
-                <span class="logo-login-t">T</span>
+        <div style="text-align:center;margin-bottom:1.5rem;">
+            <div class="logo-login-wrap">
+                <div style="line-height:0.95;white-space:nowrap;">
+                    <span class="logo-login-j">J</span><span class="logo-login-mid">ANDREX</span><span class="logo-login-t">T</span>
+                </div>
+                <p class="logo-login-sub"><span class="si-grande">S</span>OLUCIONES &nbsp;<span class="si-grande">I</span>NTEGRALES</p>
             </div>
-            <p class="logo-login-sub">Soluciones Integrales</p>
             <p class="logo-login-lema">Apasionados por el buen servicio</p>
         </div></div>""", unsafe_allow_html=True)
         st.markdown("### 🔐 Iniciar sesión")
@@ -997,12 +1013,12 @@ def panel_consulta(chat_id, ctx="General"):
                     supa("mensajes_chat","DELETE",filtro=f"?id=eq.{m['id']}"); st.rerun()
         st.markdown('<hr class="divider">',unsafe_allow_html=True)
 
-    st.markdown('<div class="tip">💡 Escribe tu consulta o usa el micrófono. Funciona mejor en Chrome.</div>',unsafe_allow_html=True)
+    st.markdown('<div class="tip">💡 Escriba su consulta o use el micrófono (Chrome/Edge). Presione Consultar al terminar.</div>',unsafe_allow_html=True)
 
     ik=f"inp_{chat_id}"
     if ik not in st.session_state: st.session_state[ik]=""
 
-    campo_voz_html5("tu consulta",ik,height=90,placeholder="Escribe o dicta tu consulta técnica...")
+    campo_voz_html5("Tu consulta",ik,height=90,placeholder="Escribe o dicta tu consulta técnica...")
     pregunta=st.session_state.get(ik,"")
 
     c1,c2,c3=st.columns([1,2,1])
