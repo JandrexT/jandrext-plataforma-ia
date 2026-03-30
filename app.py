@@ -195,21 +195,70 @@ def venice_fn(p):
         return {"ia":"Venice","icono":"🟣","respuesta":r.json()["choices"][0]["message"]["content"].strip(),"tiempo":round(time.time()-t,2),"ok":True}
     except Exception as e: return {"ia":"Venice","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
 
-def juez_fn(pregunta, respuestas):
+def mistral_fn(p):
+    """Mistral AI — gratis via API oficial (mistral-small-latest)"""
     try:
-        api_key=get_secret("GOOGLE_API_KEY")
-        resumen="\n\n".join([f"--- {r['ia']} ---\n{r['respuesta']}" for r in respuestas if r["ok"]])
-        prompt_juez=f"{CONTEXTO}\nPregunta: \"{pregunta}\"\nRespuestas:\n{resumen}\nSintetiza empático, profesional, práctico. Sin encabezados."
+        t=time.time()
+        api_key=get_secret("MISTRAL_API_KEY")
+        if not api_key: return {"ia":"Mistral","icono":"🟡","respuesta":"Sin API key","tiempo":0,"ok":False}
+        h={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"}
+        r=req.post("https://api.mistral.ai/v1/chat/completions",
+            json={"model":"mistral-small-latest",
+                  "messages":[{"role":"system","content":CONTEXTO},{"role":"user","content":p}],
+                  "max_tokens":1500},
+            headers=h,timeout=30)
+        if r.status_code==200:
+            txt=r.json()["choices"][0]["message"]["content"].strip()
+            return {"ia":"Mistral","icono":"🟡","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
+        return {"ia":"Mistral","icono":"🔴","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
+    except Exception as e: return {"ia":"Mistral","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
+
+def openrouter_fn(p):
+    """OpenRouter — acceso gratuito a múltiples modelos (Llama, Mistral, etc.)"""
+    try:
+        t=time.time()
+        api_key=get_secret("OPENROUTER_API_KEY")
+        if not api_key: return {"ia":"OpenRouter","icono":"🔷","respuesta":"Sin API key","tiempo":0,"ok":False}
+        h={"Authorization":f"Bearer {api_key}","Content-Type":"application/json",
+           "HTTP-Referer":"https://jandrext-ia.streamlit.app","X-Title":"JandrexT IA"}
+        r=req.post("https://openrouter.ai/api/v1/chat/completions",
+            json={"model":"meta-llama/llama-3.1-8b-instruct:free",
+                  "messages":[{"role":"system","content":CONTEXTO},{"role":"user","content":p}],
+                  "max_tokens":1500},
+            headers=h,timeout=30)
+        if r.status_code==200:
+            txt=r.json()["choices"][0]["message"]["content"].strip()
+            return {"ia":"OpenRouter","icono":"🔷","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
+        return {"ia":"OpenRouter","icono":"🔴","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
+    except Exception as e: return {"ia":"OpenRouter","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
+
+def juez_fn(pregunta, respuestas):
+    """Sintetiza respuestas de múltiples IAs. Usa Gemini primero, luego Groq, luego mejor respuesta."""
+    ok_resps = [r for r in respuestas if r["ok"]]
+    if not ok_resps: return "No se obtuvo respuesta de ninguna fuente."
+    if len(ok_resps) == 1: return ok_resps[0]["respuesta"]  # Solo una IA, retornar directo
+    
+    resumen = "\n\n".join([f"--- {r['ia']} ---\n{r['respuesta']}" for r in ok_resps])
+    prompt_juez = f"{CONTEXTO}\nPregunta del usuario: \"{pregunta}\"\nRespuestas de diferentes fuentes:\n{resumen}\n\nSintetiza la mejor respuesta: empática, profesional, práctica. Sin mencionar las fuentes ni encabezados."
+    
+    # Intento 1: Gemini
+    try:
+        api_key = get_secret("GOOGLE_API_KEY")
         if api_key:
             payload={"contents":[{"parts":[{"text":prompt_juez}]}]}
             url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
             r=req.post(url,json=payload,timeout=30)
             if r.status_code==200:
                 return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        # Fallback: usar mejor respuesta disponible
-        ok=[r for r in respuestas if r["ok"]]
-        return ok[0]["respuesta"] if ok else "Sin respuesta disponible."
-    except Exception as e: return groq_simple(pregunta)
+    except: pass
+    
+    # Intento 2: Groq como sintetizador
+    try:
+        return groq_simple(prompt_juez)
+    except: pass
+    
+    # Último recurso: mejor respuesta disponible (la más larga)
+    return max(ok_resps, key=lambda x: len(x["respuesta"]))["respuesta"]
 
 def ia_generar(prompt, modelo="gemini-2.0-flash"):
     try:
@@ -235,25 +284,53 @@ def groq_simple(prompt):
     except Exception as e: return f"❌ Error generando respuesta: {e}"
 
 def ia_extraer_doc(b64, tipo="imagen"):
-    try:
-        api_key=get_secret("GOOGLE_API_KEY")
-        if not api_key: return {}
-        prompt="""Extrae datos de este documento. Devuelve SOLO JSON válido sin markdown:
-{"razon_social":"","nit":"","direccion":"","municipio":"","departamento":"",
-"telefono":"","email":"","contacto":"","cargo_contacto":"","responsabilidad_fiscal":"","regimen_fiscal":""}"""
-        mime="application/pdf" if tipo=="pdf" else "image/jpeg"
-        payload={"contents":[{"parts":[
-            {"text":prompt},
-            {"inline_data":{"mime_type":mime,"data":b64}}
-        ]}]}
-        url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-        r=req.post(url,json=payload,timeout=30)
-        if r.status_code==200:
-            txt=r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-            txt=txt.replace("```json","").replace("```","").strip()
-            return json.loads(txt)
+    """Extrae datos de RUT/documento con Gemini vision + fallback OpenRouter vision"""
+    prompt_json = """Extrae los datos de este documento colombiano (RUT, NIT, cámara de comercio o similar).
+Devuelve SOLO JSON válido sin texto adicional ni markdown:
+{"razon_social":"","nit":"","direccion":"","municipio":"","departamento":"","telefono":"","email":"","contacto":"","cargo_contacto":"","responsabilidad_fiscal":"","regimen_fiscal":""}"""
+    
+    def parsear_json(txt):
+        txt = txt.replace("```json","").replace("```","").strip()
+        s = txt.find("{"); e = txt.rfind("}")+1
+        if s>=0 and e>0:
+            try: return json.loads(txt[s:e])
+            except: pass
         return {}
-    except: return {}
+    
+    # Intento 1: Gemini 2.0 flash con visión
+    try:
+        api_key = get_secret("GOOGLE_API_KEY")
+        if api_key:
+            mime = "application/pdf" if tipo=="pdf" else "image/jpeg"
+            payload = {"contents":[{"parts":[{"text":prompt_json},{"inline_data":{"mime_type":mime,"data":b64}}]}]}
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+            r = req.post(url, json=payload, timeout=40)
+            if r.status_code == 200:
+                txt = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                resultado = parsear_json(txt)
+                if resultado.get("nit") or resultado.get("razon_social"): return resultado
+    except: pass
+    
+    # Intento 2: OpenRouter con modelo de visión gratuito
+    try:
+        api_key = get_secret("OPENROUTER_API_KEY")
+        if api_key:
+            h = {"Authorization":f"Bearer {api_key}","Content-Type":"application/json",
+                 "HTTP-Referer":"https://jandrext-ia.streamlit.app","X-Title":"JandrexT IA"}
+            mime = "application/pdf" if tipo=="pdf" else "image/jpeg"
+            payload = {"model":"meta-llama/llama-3.2-11b-vision-instruct:free",
+                       "messages":[{"role":"user","content":[
+                           {"type":"text","text":prompt_json},
+                           {"type":"image_url","image_url":{"url":f"data:{mime};base64,{b64}"}}
+                       ]}],"max_tokens":600}
+            r = req.post("https://openrouter.ai/api/v1/chat/completions", headers=h, json=payload, timeout=40)
+            if r.status_code == 200:
+                txt = r.json()["choices"][0]["message"]["content"].strip()
+                resultado = parsear_json(txt)
+                if resultado: return resultado
+    except: pass
+    
+    return {}
 
 def generar_pdf_html(titulo, contenido):
     logo_tag=f'<img src="data:image/png;base64,{logo_b64}" style="height:55px;"/>' if logo_b64 else ""
@@ -311,7 +388,8 @@ function toggleMic_{uid}(){{
   if(!SR){{ sta.innerHTML='<span style="color:#f87171">⚠️ Usa Google Chrome o Edge</span>'; return; }}
   micRec_{uid}=new SR();
   micRec_{uid}.lang='es-CO';
-  micRec_{uid}.interimResults=false;
+  micRec_{uid}.interimResults=true;
+  micRec_{uid}.continuous=true;
   micRec_{uid}.maxAlternatives=1;
   micRec_{uid}.onstart=function(){{
     micActive_{uid}=true;
@@ -320,7 +398,12 @@ function toggleMic_{uid}(){{
     sta.innerHTML='<span style="color:#4ade80">🔴 Grabando... habla ahora</span>';
   }};
   micRec_{uid}.onresult=function(e){{
-    var txt=e.results[0][0].transcript;
+    var txt='';
+    for(var i=e.resultIndex;i<e.results.length;i++){{
+      if(e.results[i].isFinal) txt+=e.results[i][0].transcript+' ';
+    }}
+    if(!txt) return;
+    txt=txt.trim();
     sta.innerHTML='<span style="color:#4ade80">✅ '+txt+'</span>';
     // Insertar en el textarea de Streamlit
     var tas=window.parent.document.querySelectorAll('textarea');
@@ -428,7 +511,8 @@ def panel_voz_global(campos_disponibles, seccion_key):
     }}
     rec_{uid} = new SR();
     rec_{uid}.lang = 'es-CO';
-    rec_{uid}.interimResults = false;
+    rec_{uid}.interimResults = true;
+    rec_{uid}.continuous = true;
     rec_{uid}.maxAlternatives = 1;
     rec_{uid}.onstart = function() {{
       activo_{uid} = true;
@@ -533,7 +617,8 @@ function toggleMic_{uid}(){{
   if(!SR){{ sta.innerHTML='<span style="color:#f87171">⚠️ Usa Google Chrome o Edge</span>'; return; }}
   micRec_{uid}=new SR();
   micRec_{uid}.lang='es-CO';
-  micRec_{uid}.interimResults=false;
+  micRec_{uid}.interimResults=true;
+  micRec_{uid}.continuous=true;
   micRec_{uid}.maxAlternatives=1;
   micRec_{uid}.onstart=function(){{
     micActive_{uid}=true;
@@ -542,7 +627,12 @@ function toggleMic_{uid}(){{
     sta.innerHTML='<span style="color:#4ade80">🔴 Grabando... habla ahora</span>';
   }};
   micRec_{uid}.onresult=function(e){{
-    var txt=e.results[0][0].transcript;
+    var txt='';
+    for(var i=e.resultIndex;i<e.results.length;i++){{
+      if(e.results[i].isFinal) txt+=e.results[i][0].transcript+' ';
+    }}
+    if(!txt) return;
+    txt=txt.trim();
     sta.innerHTML='<span style="color:#4ade80">✅ '+txt+'</span>';
     // Insertar en el textarea de Streamlit
     var tas=window.parent.document.querySelectorAll('textarea');
@@ -647,18 +737,18 @@ html,body,[class*="css"]{{font-family:'Inter','Helvetica Neue',Arial,sans-serif;
 .login-wrap{{max-width:480px;margin:2.5rem auto;background:#0f0000;
     border:1px solid #cc0000;border-radius:16px;padding:2.5rem;}}
 .logo-login-j{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;
-    font-size:14rem;font-weight:900;letter-spacing:0;line-height:1;display:inline;
-    -webkit-text-stroke:2.5px #fff;vertical-align:middle;}}
+    font-size:9rem;font-weight:900;letter-spacing:0;line-height:1;display:inline-block;
+    -webkit-text-stroke:2px #fff;vertical-align:baseline;}}
 .logo-login-mid{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#fff;
-    font-size:7rem;font-weight:900;letter-spacing:10px;line-height:1;display:inline;
-    -webkit-text-stroke:2px #cc0000;vertical-align:middle;}}
+    font-size:4.5rem;font-weight:900;letter-spacing:8px;line-height:1;display:inline-block;
+    -webkit-text-stroke:1.5px #cc0000;vertical-align:baseline;}}
 .logo-login-t{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;
-    font-size:14rem;font-weight:900;letter-spacing:0;line-height:1;display:inline;
-    -webkit-text-stroke:2.5px #fff;vertical-align:middle;}}
+    font-size:9rem;font-weight:900;letter-spacing:0;line-height:1;display:inline-block;
+    -webkit-text-stroke:2px #fff;vertical-align:baseline;}}
 .logo-login-sub{{font-family:'Inter',sans-serif;color:#666;font-size:0.65rem;
     letter-spacing:4px;text-transform:uppercase;margin:0.3rem 0 0;}}
 .logo-login-lema{{font-family:'JennaSue','Georgia',serif;color:#cc4444;
-    font-size:2.8rem;margin:0.5rem 0;font-style:italic;line-height:1.2;}}
+    font-size:3.8rem;margin:0.3rem 0;font-style:italic;line-height:1.2;}}
 
 /* HEADER */
 .header-inst{{background:linear-gradient(135deg,#0a0000,#1a0000);border-radius:12px;
@@ -860,9 +950,13 @@ with st.sidebar:
     if "ia_usar_g" not in st.session_state: st.session_state.ia_usar_g=True
     if "ia_usar_r" not in st.session_state: st.session_state.ia_usar_r=True
     if "ia_usar_v" not in st.session_state: st.session_state.ia_usar_v=False
+    if "ia_usar_m" not in st.session_state: st.session_state.ia_usar_m=False
+    if "ia_usar_o" not in st.session_state: st.session_state.ia_usar_o=False
     usar_g=st.session_state.ia_usar_g
     usar_r=st.session_state.ia_usar_r
     usar_v=st.session_state.ia_usar_v
+    usar_m=st.session_state.ia_usar_m
+    usar_o=st.session_state.ia_usar_o
 
     st.markdown("---")
     if st.button("🚪 Cerrar sesión",use_container_width=True):
@@ -920,7 +1014,9 @@ def panel_consulta(chat_id, ctx="General"):
         if usar_g: fns.append(lambda p: gemini_fn(p))
         if usar_r: fns.append(lambda p: groq_fn(p))
         if usar_v: fns.append(lambda p: venice_fn(p))
-        if not fns: st.warning("Activa al menos una fuente de consulta."); return
+        if usar_m: fns.append(lambda p: mistral_fn(p))
+        if usar_o: fns.append(lambda p: openrouter_fn(p))
+        if not fns: fns=[lambda p: groq_fn(p)]  # Groq siempre como fallback
         with st.spinner("Consultando..."):
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(fns)) as ex:
                 resultados=list(ex.map(lambda f:f(pregunta),fns))
@@ -1817,12 +1913,16 @@ elif sec=="config" and rol=="admin":
         with col_ia1:
             st.markdown("**Activar / desactivar fuentes**")
             nuevo_g=st.toggle("🔵 Gemini 2.0 Flash",value=st.session_state.get("ia_usar_g",True),key="tog_g")
-            nuevo_r=st.toggle("🟠 Groq / LLaMA 3.3",value=st.session_state.get("ia_usar_r",True),key="tog_r")
+            nuevo_r=st.toggle("🟠 Groq / LLaMA 3.3 (✅ funcionando)",value=st.session_state.get("ia_usar_r",True),key="tog_r")
+            nuevo_m=st.toggle("🟡 Mistral AI (gratis)",value=st.session_state.get("ia_usar_m",False),key="tog_m")
+            nuevo_o=st.toggle("🔷 OpenRouter / Llama gratis",value=st.session_state.get("ia_usar_o",False),key="tog_o")
             nuevo_v=st.toggle("🟣 Venice AI",value=st.session_state.get("ia_usar_v",False),key="tog_v")
             if st.button("💾 Guardar configuración IAs",type="primary"):
                 st.session_state.ia_usar_g=nuevo_g
                 st.session_state.ia_usar_r=nuevo_r
                 st.session_state.ia_usar_v=nuevo_v
+                st.session_state.ia_usar_m=nuevo_m
+                st.session_state.ia_usar_o=nuevo_o
                 st.success("✅ Configuración de IAs guardada")
         with col_ia2:
             st.markdown("**Verificar conexión**")
@@ -1846,6 +1946,20 @@ elif sec=="config" and rol=="admin":
                     res=venice_fn("Responde solo: OK")
                 if res["ok"]: st.success(f"✅ Venice OK — {res['respuesta'][:40]}")
                 else: st.error(f"❌ Venice: {res['respuesta'][:80]}")
+            if st.button("🔍 Probar Mistral"):
+                with st.spinner("Verificando..."):
+                    res=mistral_fn("Responde solo: OK")
+                if res["ok"]: st.success(f"✅ Mistral OK — {res['respuesta'][:40]}")
+                else:
+                    st.error(f"❌ Mistral: {res['respuesta'][:80]}")
+                    st.caption("Obtén clave gratis en console.mistral.ai → MISTRAL_API_KEY en Secrets")
+            if st.button("🔍 Probar OpenRouter"):
+                with st.spinner("Verificando..."):
+                    res=openrouter_fn("Responde solo: OK")
+                if res["ok"]: st.success(f"✅ OpenRouter OK — {res['respuesta'][:40]}")
+                else:
+                    st.error(f"❌ OpenRouter: {res['respuesta'][:80]}")
+                    st.caption("Obtén clave gratis en openrouter.ai → OPENROUTER_API_KEY en Secrets")
         st.markdown("---")
         st.markdown(f"""**Estado actual:**  
 🔵 Gemini 2.0 Flash: {"✅ Activo" if st.session_state.get("ia_usar_g",True) else "⭕ Inactivo"}  
