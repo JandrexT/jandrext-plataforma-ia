@@ -277,20 +277,94 @@ pre{{white-space:pre-wrap;line-height:1.6;}}
 
 # ── Micrófono HTML5 nativo ────────────────────────────────────────────────────
 def campo_voz_html5(label, key, height=100, placeholder="Escribe o usa el micrófono..."):
-    """Campo de texto simple — el micrófono global maneja la voz"""
+    """Campo de texto con micrófono integrado — botón iniciar/detener"""
     if key not in st.session_state: st.session_state[key]=""
+
+    uid = key.replace("-","_").replace(" ","_")
+
+    mic_html = f"""
+<div style="margin-bottom:6px;">
+  <button id="micBtn_{uid}" onclick="toggleMic_{uid}()" style="
+    background:#cc0000;color:#fff;border:none;border-radius:8px;
+    padding:8px 18px;font-size:0.9rem;font-weight:700;cursor:pointer;
+    margin-right:8px;transition:all 0.2s;">
+    🎤 Iniciar grabación
+  </button>
+  <span id="micStatus_{uid}" style="font-size:0.8rem;color:#888;">
+    Listo — Chrome/Edge recomendado
+  </span>
+</div>
+<script>
+var micRec_{uid}=null, micActive_{uid}=false;
+function toggleMic_{uid}(){{
+  var btn=document.getElementById('micBtn_{uid}');
+  var sta=document.getElementById('micStatus_{uid}');
+  if(micActive_{uid}){{
+    if(micRec_{uid}) micRec_{uid}.stop();
+    micActive_{uid}=false;
+    btn.textContent='🎤 Iniciar grabación';
+    btn.style.background='#cc0000';
+    sta.textContent='Grabación detenida.';
+    return;
+  }}
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){{ sta.innerHTML='<span style="color:#f87171">⚠️ Usa Google Chrome o Edge</span>'; return; }}
+  micRec_{uid}=new SR();
+  micRec_{uid}.lang='es-CO';
+  micRec_{uid}.interimResults=false;
+  micRec_{uid}.maxAlternatives=1;
+  micRec_{uid}.onstart=function(){{
+    micActive_{uid}=true;
+    btn.textContent='⏹ Detener';
+    btn.style.background='#7a0000';
+    sta.innerHTML='<span style="color:#4ade80">🔴 Grabando... habla ahora</span>';
+  }};
+  micRec_{uid}.onresult=function(e){{
+    var txt=e.results[0][0].transcript;
+    sta.innerHTML='<span style="color:#4ade80">✅ '+txt+'</span>';
+    // Insertar en el textarea de Streamlit
+    var tas=window.parent.document.querySelectorAll('textarea');
+    for(var i=0;i<tas.length;i++){{
+      if(tas[i].getAttribute('aria-label')==='{label}'){{
+        var setter=Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype,'value').set;
+        setter.call(tas[i],txt);
+        tas[i].dispatchEvent(new Event('input',{{bubbles:true}}));
+        break;
+      }}
+    }}
+    micActive_{uid}=false;
+    btn.textContent='🎤 Iniciar grabación';
+    btn.style.background='#cc0000';
+  }};
+  micRec_{uid}.onerror=function(e){{
+    sta.innerHTML='<span style="color:#f87171">Error: '+e.error+' — permite el micrófono en Chrome</span>';
+    micActive_{uid}=false;
+    btn.textContent='🎤 Iniciar grabación';
+    btn.style.background='#cc0000';
+  }};
+  micRec_{uid}.onend=function(){{
+    micActive_{uid}=false;
+    btn.textContent='🎤 Iniciar grabación';
+    btn.style.background='#cc0000';
+  }};
+  micRec_{uid}.start();
+}}
+</script>"""
+
+    st.components.v1.html(mic_html, height=55)
     val=st.text_area(label,value=st.session_state.get(key,""),
         height=height,key=f"ta_{key}",placeholder=placeholder)
     st.session_state[key]=val
     return val
 
 def panel_voz_global(campos_disponibles, seccion_key):
-    """Panel de micrófono usando Web Speech API nativa del navegador"""
+    """Panel de micrófono usando Web Speech API — botón Iniciar/Detener unificado"""
     if f"voz_{seccion_key}" not in st.session_state:
         st.session_state[f"voz_{seccion_key}"] = ""
 
     campos_lista = list(campos_disponibles.keys())
     campos_str = "|".join(campos_lista)
+    uid = seccion_key.replace("-","_")
 
     html_mic = f"""
 <div style="background:#0a0f00;border:1px solid #cc0000;border-radius:10px;padding:1rem;margin-bottom:8px;">
@@ -298,41 +372,34 @@ def panel_voz_global(campos_disponibles, seccion_key):
     DICTAR POR VOZ
   </div>
   <div style="display:flex;gap:8px;margin-bottom:8px;">
-    <button id="btnStart_{seccion_key}"
-      onclick="startRec_{seccion_key}()"
+    <button id="btnToggle_{uid}"
+      onclick="toggleRec_{uid}()"
       style="flex:1;background:#cc0000;color:#fff;border:none;border-radius:8px;
       padding:10px;font-size:14px;font-weight:700;cursor:pointer;">
-      Iniciar grabacion
-    </button>
-    <button id="btnStop_{seccion_key}"
-      onclick="stopRec_{seccion_key}()"
-      disabled
-      style="flex:1;background:#333;color:#888;border:none;border-radius:8px;
-      padding:10px;font-size:14px;font-weight:700;cursor:not-allowed;">
-      Detener
+      🎤 Iniciar grabación
     </button>
   </div>
-  <div id="status_{seccion_key}"
+  <div id="status_{uid}"
     style="color:#888;font-size:12px;margin-bottom:6px;">
-    Listo para grabar en Chrome
+    Listo para grabar en Chrome/Edge
   </div>
-  <div id="preview_{seccion_key}"
+  <div id="preview_{uid}"
     style="background:#0a1a00;border:1px solid #166534;border-radius:6px;
     padding:8px;color:#4ade80;font-size:13px;min-height:36px;margin-bottom:8px;
-    display:none;word-wrap:break-word;">
+    word-wrap:break-word;">
   </div>
   <div style="display:flex;gap:8px;align-items:center;">
-    <select id="campoSel_{seccion_key}"
+    <select id="campoSel_{uid}"
       style="flex:1;background:#1a0000;color:#ccc;border:1px solid #3a0000;
       border-radius:6px;padding:8px;font-size:13px;">
-      {chr(10).join(f'<option value="{c}">{c}</option>' for c in campos_lista)}
+      {chr(10).join(f'<option value="{cx}">{cx}</option>' for cx in campos_lista)}
     </select>
-    <button onclick="enviarTexto_{seccion_key}()"
+    <button onclick="insertarTexto_{uid}()"
       style="background:#166534;color:#fff;border:none;border-radius:6px;
       padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">
       Insertar
     </button>
-    <button onclick="limpiarTexto_{seccion_key}()"
+    <button onclick="limpiarTexto_{uid}()"
       style="background:#333;color:#888;border:none;border-radius:6px;
       padding:8px 10px;font-size:13px;cursor:pointer;">
       X
@@ -342,86 +409,85 @@ def panel_voz_global(campos_disponibles, seccion_key):
 
 <script>
 (function() {{
-  var rec_{seccion_key} = null;
-  var texto_{seccion_key} = '';
-  var campos_map = {{}};
-  "{campos_str}".split("|").forEach(function(c) {{ campos_map[c] = c; }});
+  var rec_{uid} = null;
+  var activo_{uid} = false;
+  var textoCapturado_{uid} = '';
 
-  window.startRec_{seccion_key} = function() {{
-    if (!('webkitSpeechRecognition' in window || 'SpeechRecognition' in window)) {{
-      document.getElementById('status_{seccion_key}').innerHTML =
-        '<span style="color:#f87171">Usa Google Chrome para el microfono</span>';
+  window.toggleRec_{uid} = function() {{
+    var btn = document.getElementById('btnToggle_{uid}');
+    var sta = document.getElementById('status_{uid}');
+    var pre = document.getElementById('preview_{uid}');
+    if (activo_{uid}) {{
+      if (rec_{uid}) rec_{uid}.stop();
       return;
     }}
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    rec_{seccion_key} = new SR();
-    rec_{seccion_key}.lang = 'es-CO';
-    rec_{seccion_key}.continuous = true;
-    rec_{seccion_key}.interimResults = true;
-    rec_{seccion_key}.start();
+    if (!SR) {{
+      sta.innerHTML = '<span style="color:#f87171">⚠️ Usa Chrome o Edge para el micrófono</span>';
+      return;
+    }}
+    rec_{uid} = new SR();
+    rec_{uid}.lang = 'es-CO';
+    rec_{uid}.interimResults = false;
+    rec_{uid}.maxAlternatives = 1;
+    rec_{uid}.onstart = function() {{
+      activo_{uid} = true;
+      btn.textContent = '⏹ Detener';
+      btn.style.background = '#7a0000';
+      sta.innerHTML = '<span style="color:#4ade80">🔴 Grabando... habla ahora</span>';
+    }};
+    rec_{uid}.onresult = function(e) {{
+      var txt = e.results[0][0].transcript;
+      textoCapturado_{uid} = txt;
+      pre.textContent = txt;
+      sta.innerHTML = '<span style="color:#4ade80">✅ Captado: ' + txt + '</span>';
+    }};
+    rec_{uid}.onerror = function(e) {{
+      sta.innerHTML = '<span style="color:#f87171">Error: ' + e.error + ' — permite el micrófono</span>';
+      activo_{uid} = false;
+      btn.textContent = '🎤 Iniciar grabación';
+      btn.style.background = '#cc0000';
+    }};
+    rec_{uid}.onend = function() {{
+      activo_{uid} = false;
+      btn.textContent = '🎤 Iniciar grabación';
+      btn.style.background = '#cc0000';
+    }};
+    rec_{uid}.start();
+  }};
 
-    document.getElementById('btnStart_{seccion_key}').disabled = true;
-    document.getElementById('btnStart_{seccion_key}').style.background = '#555';
-    document.getElementById('btnStop_{seccion_key}').disabled = false;
-    document.getElementById('btnStop_{seccion_key}').style.background = '#cc0000';
-    document.getElementById('btnStop_{seccion_key}').style.color = '#fff';
-    document.getElementById('btnStop_{seccion_key}').style.cursor = 'pointer';
-    document.getElementById('status_{seccion_key}').innerHTML =
-      '<span style="color:#4ade80">Grabando... habla ahora</span>';
-    document.getElementById('preview_{seccion_key}').style.display = 'block';
-
-    rec_{seccion_key}.onresult = function(e) {{
-      var interim = '';
-      var final_txt = '';
-      for (var i = e.resultIndex; i < e.results.length; i++) {{
-        if (e.results[i].isFinal) {{
-          final_txt += e.results[i][0].transcript + ' ';
-        }} else {{
-          interim += e.results[i][0].transcript;
-        }}
+  window.insertarTexto_{uid} = function() {{
+    var txt = textoCapturado_{uid};
+    var sta = document.getElementById('status_{uid}');
+    if (!txt) {{
+      sta.innerHTML = '<span style="color:#facc15">Sin texto — graba primero</span>';
+      return;
+    }}
+    var sel = document.getElementById('campoSel_{uid}').value;
+    var tas = window.parent.document.querySelectorAll('textarea');
+    var insertado = false;
+    for (var i = 0; i < tas.length; i++) {{
+      var lbl = tas[i].getAttribute('aria-label') || '';
+      if (lbl && (lbl.indexOf(sel) >= 0 || sel.indexOf(lbl) >= 0)) {{
+        var setter = Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype,'value').set;
+        var actual = tas[i].value;
+        setter.call(tas[i], (actual ? actual + ' ' : '') + txt);
+        tas[i].dispatchEvent(new Event('input', {{bubbles: true}}));
+        sta.innerHTML = '<span style="color:#4ade80">✅ Insertado en: ' + sel + '</span>';
+        textoCapturado_{uid} = '';
+        insertado = true;
+        break;
       }}
-      if (final_txt) texto_{seccion_key} += final_txt;
-      document.getElementById('preview_{seccion_key}').innerHTML =
-        '<b>' + texto_{seccion_key} + '</b>' +
-        '<em style="color:#888"> ' + interim + '</em>';
-    }};
-
-    rec_{seccion_key}.onerror = function(e) {{
-      document.getElementById('status_{seccion_key}').innerHTML =
-        '<span style="color:#f87171">Error: ' + e.error + ' — permite el microfono en Chrome</span>';
-    }};
+    }}
+    if (!insertado) {{
+      sta.innerHTML = '<span style="color:#facc15">Campo no encontrado — selecciona el campo primero</span>';
+    }}
   }};
 
-  window.stopRec_{seccion_key} = function() {{
-    if (rec_{seccion_key}) rec_{seccion_key}.stop();
-    document.getElementById('btnStart_{seccion_key}').disabled = false;
-    document.getElementById('btnStart_{seccion_key}').style.background = '#cc0000';
-    document.getElementById('btnStop_{seccion_key}').disabled = true;
-    document.getElementById('btnStop_{seccion_key}').style.background = '#333';
-    document.getElementById('btnStop_{seccion_key}').style.color = '#888';
-    document.getElementById('status_{seccion_key}').innerHTML =
-      '<span style="color:#facc15">Grabacion detenida. Selecciona el campo y presiona Insertar.</span>';
-  }};
-
-  window.enviarTexto_{seccion_key} = function() {{
-    var txt = texto_{seccion_key}.trim();
-    if (!txt) {{ alert('Graba algo primero'); return; }}
-    var campo = document.getElementById('campoSel_{seccion_key}').value;
-    window.parent.postMessage({{
-      type: 'voz_insertar',
-      seccion: '{seccion_key}',
-      campo: campo,
-      texto: txt
-    }}, '*');
-    document.getElementById('status_{seccion_key}').innerHTML =
-      '<span style="color:#4ade80">Texto enviado a: ' + campo + '</span>';
-  }};
-
-  window.limpiarTexto_{seccion_key} = function() {{
-    texto_{seccion_key} = '';
-    document.getElementById('preview_{seccion_key}').innerHTML = '';
-    document.getElementById('preview_{seccion_key}').style.display = 'none';
-    document.getElementById('status_{seccion_key}').innerHTML = 'Listo para grabar';
+  window.limpiarTexto_{uid} = function() {{
+    textoCapturado_{uid} = '';
+    document.getElementById('preview_{uid}').textContent = '';
+    document.getElementById('status_{uid}').textContent = 'Listo para grabar.';
   }};
 }})();
 </script>"""
@@ -433,8 +499,81 @@ def panel_voz_global(campos_disponibles, seccion_key):
 
 
 def campo_voz_html5(label, key, height=100, placeholder="Escribe o usa el micrófono..."):
-    """Campo de texto simple — el micrófono global maneja la voz"""
+    """Campo de texto con micrófono integrado — botón iniciar/detener"""
     if key not in st.session_state: st.session_state[key]=""
+
+    uid = key.replace("-","_").replace(" ","_")
+
+    mic_html = f"""
+<div style="margin-bottom:6px;">
+  <button id="micBtn_{uid}" onclick="toggleMic_{uid}()" style="
+    background:#cc0000;color:#fff;border:none;border-radius:8px;
+    padding:8px 18px;font-size:0.9rem;font-weight:700;cursor:pointer;
+    margin-right:8px;transition:all 0.2s;">
+    🎤 Iniciar grabación
+  </button>
+  <span id="micStatus_{uid}" style="font-size:0.8rem;color:#888;">
+    Listo — Chrome/Edge recomendado
+  </span>
+</div>
+<script>
+var micRec_{uid}=null, micActive_{uid}=false;
+function toggleMic_{uid}(){{
+  var btn=document.getElementById('micBtn_{uid}');
+  var sta=document.getElementById('micStatus_{uid}');
+  if(micActive_{uid}){{
+    if(micRec_{uid}) micRec_{uid}.stop();
+    micActive_{uid}=false;
+    btn.textContent='🎤 Iniciar grabación';
+    btn.style.background='#cc0000';
+    sta.textContent='Grabación detenida.';
+    return;
+  }}
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){{ sta.innerHTML='<span style="color:#f87171">⚠️ Usa Google Chrome o Edge</span>'; return; }}
+  micRec_{uid}=new SR();
+  micRec_{uid}.lang='es-CO';
+  micRec_{uid}.interimResults=false;
+  micRec_{uid}.maxAlternatives=1;
+  micRec_{uid}.onstart=function(){{
+    micActive_{uid}=true;
+    btn.textContent='⏹ Detener';
+    btn.style.background='#7a0000';
+    sta.innerHTML='<span style="color:#4ade80">🔴 Grabando... habla ahora</span>';
+  }};
+  micRec_{uid}.onresult=function(e){{
+    var txt=e.results[0][0].transcript;
+    sta.innerHTML='<span style="color:#4ade80">✅ '+txt+'</span>';
+    // Insertar en el textarea de Streamlit
+    var tas=window.parent.document.querySelectorAll('textarea');
+    for(var i=0;i<tas.length;i++){{
+      if(tas[i].getAttribute('aria-label')==='{label}'){{
+        var setter=Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype,'value').set;
+        setter.call(tas[i],txt);
+        tas[i].dispatchEvent(new Event('input',{{bubbles:true}}));
+        break;
+      }}
+    }}
+    micActive_{uid}=false;
+    btn.textContent='🎤 Iniciar grabación';
+    btn.style.background='#cc0000';
+  }};
+  micRec_{uid}.onerror=function(e){{
+    sta.innerHTML='<span style="color:#f87171">Error: '+e.error+' — permite el micrófono en Chrome</span>';
+    micActive_{uid}=false;
+    btn.textContent='🎤 Iniciar grabación';
+    btn.style.background='#cc0000';
+  }};
+  micRec_{uid}.onend=function(){{
+    micActive_{uid}=false;
+    btn.textContent='🎤 Iniciar grabación';
+    btn.style.background='#cc0000';
+  }};
+  micRec_{uid}.start();
+}}
+</script>"""
+
+    st.components.v1.html(mic_html, height=55)
     val=st.text_area(label,value=st.session_state.get(key,""),
         height=height,key=f"ta_{key}",placeholder=placeholder)
     st.session_state[key]=val
@@ -508,18 +647,18 @@ html,body,[class*="css"]{{font-family:'Inter','Helvetica Neue',Arial,sans-serif;
 .login-wrap{{max-width:480px;margin:2.5rem auto;background:#0f0000;
     border:1px solid #cc0000;border-radius:16px;padding:2.5rem;}}
 .logo-login-j{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;
-    font-size:7.8rem;font-weight:900;letter-spacing:4px;line-height:1.1;display:inline;
-    -webkit-text-stroke:2.5px #fff;}}
+    font-size:14rem;font-weight:900;letter-spacing:0;line-height:1;display:inline;
+    -webkit-text-stroke:2.5px #fff;vertical-align:middle;}}
 .logo-login-mid{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#fff;
-    font-size:7.8rem;font-weight:900;letter-spacing:4px;line-height:1.1;display:inline;
-    -webkit-text-stroke:2px #cc0000;}}
+    font-size:7rem;font-weight:900;letter-spacing:10px;line-height:1;display:inline;
+    -webkit-text-stroke:2px #cc0000;vertical-align:middle;}}
 .logo-login-t{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;
-    font-size:7.8rem;font-weight:900;letter-spacing:4px;line-height:1.1;display:inline;
-    -webkit-text-stroke:2.5px #fff;}}
+    font-size:14rem;font-weight:900;letter-spacing:0;line-height:1;display:inline;
+    -webkit-text-stroke:2.5px #fff;vertical-align:middle;}}
 .logo-login-sub{{font-family:'Inter',sans-serif;color:#666;font-size:0.65rem;
     letter-spacing:4px;text-transform:uppercase;margin:0.3rem 0 0;}}
 .logo-login-lema{{font-family:'JennaSue','Georgia',serif;color:#cc4444;
-    font-size:1.6rem;margin:0.3rem 0;font-style:italic;}}
+    font-size:2.8rem;margin:0.5rem 0;font-style:italic;line-height:1.2;}}
 
 /* HEADER */
 .header-inst{{background:linear-gradient(135deg,#0a0000,#1a0000);border-radius:12px;
@@ -629,14 +768,45 @@ if not st.session_state.usuario:
             <p class="logo-login-lema">Apasionados por el buen servicio</p>
         </div></div>""", unsafe_allow_html=True)
         st.markdown("### 🔐 Iniciar sesión")
-        email=st.text_input("Correo electrónico",placeholder="usuario@jandrext.com")
+        # Leer email guardado en localStorage via JS
+        recordar_js = """
+<script>
+(function(){
+    var saved = localStorage.getItem('jandrext_email');
+    if(saved){
+        // Intentar rellenar el campo de email
+        var inputs = window.parent.document.querySelectorAll('input[type="text"]');
+        if(inputs.length > 0){ 
+            var nativeSetter = Object.getOwnPropertyDescriptor(window.parent.HTMLInputElement.prototype,'value').set;
+            nativeSetter.call(inputs[0], saved);
+            inputs[0].dispatchEvent(new Event('input', {bubbles:true}));
+        }
+    }
+})();
+</script>"""
+        st.components.v1.html(recordar_js, height=0)
+
+        saved_email = ""
+        try:
+            saved_email = st.query_params.get("em","")
+        except: pass
+
+        email=st.text_input("Correo electrónico",value=saved_email,placeholder="usuario@jandrext.com")
         pwd=st.text_input("Contraseña",type="password")
-        st.checkbox("Recordar en este dispositivo")
+        recordar=st.checkbox("Recordar en este dispositivo", value=bool(saved_email))
         if st.button("Ingresar",type="primary",use_container_width=True):
             if email and pwd:
                 with st.spinner("Verificando..."):
                     usuario,error=verificar_login(email.strip(),pwd.strip())
-                if usuario: st.session_state.usuario=usuario; st.rerun()
+                if usuario:
+                    st.session_state.usuario=usuario
+                    if recordar:
+                        try: st.query_params["em"]=email.strip()
+                        except: pass
+                    else:
+                        try: st.query_params.pop("em",None)
+                        except: pass
+                    st.rerun()
                 else: st.error(error)
             else: st.warning("⚠️ Completa todos los campos.")
         st.caption("¿Olvidaste tu contraseña? Contacta: proyectos@jandrext.com · 317 391 0621")
