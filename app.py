@@ -60,13 +60,16 @@ def hash_pwd(pwd):
     except: return hashlib.sha256(pwd.encode()).hexdigest()
 
 def verify_pwd(pwd, hashed):
+    if not hashed: return False
+    if hashlib.md5(pwd.encode()).hexdigest() == hashed: return True
+    if hashlib.sha256(pwd.encode()).hexdigest() == hashed: return True
+    if hashlib.sha256(pwd.encode()).hexdigest() == hashed.lower(): return True
     try:
         import bcrypt
-        if hashed and hashed.startswith("$2"):
+        if hashed.startswith("$2"):
             return bcrypt.checkpw(pwd.encode(), hashed.encode())
     except: pass
-    return (hashlib.md5(pwd.encode()).hexdigest() == hashed or
-            hashlib.sha256(pwd.encode()).hexdigest() == hashed)
+    return False
 
 def verificar_login(email, pwd):
     bloqueo = supa("intentos_login", filtro=f"?email=eq.{email}")
