@@ -35,9 +35,17 @@ SERVICIOS = {
     "otro": "Otro servicio",
 }
 
-TELEGRAM_TOKEN = "8795518431:AAGVIGSbtk7FhK4qBKCCY0HZ5ET7bd8EQTQ"
-TELEGRAM_CHAT_ID = "1773051960"
 SUPABASE_URL = "https://ktzgkueikwzhyhpfqqwg.supabase.co"
+
+def _get_telegram_creds():
+    import os
+    try:
+        token = st.secrets.get("TELEGRAM_BOT_TOKEN", "").strip() or os.getenv("TELEGRAM_BOT_TOKEN", "8795518431:AAGVIGSbtk7FhK4qBKCCY0HZ5ET7bd8EQTQ")
+        chat_id = st.secrets.get("TELEGRAM_CHAT_ID_ADMIN", "").strip() or os.getenv("TELEGRAM_CHAT_ID_ADMIN", "1773051960")
+    except:
+        token = os.getenv("TELEGRAM_BOT_TOKEN", "8795518431:AAGVIGSbtk7FhK4qBKCCY0HZ5ET7bd8EQTQ")
+        chat_id = os.getenv("TELEGRAM_CHAT_ID_ADMIN", "1773051960")
+    return token.strip(), chat_id.strip()
 
 
 # ============================================================
@@ -65,17 +73,19 @@ def validar_cobertura(ciudad: str) -> bool:
 
 def enviar_telegram(mensaje: str):
     try:
-        requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+        token, chat_id = _get_telegram_creds()
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
             json={
-                "chat_id": TELEGRAM_CHAT_ID,
+                "chat_id": chat_id,
                 "text": mensaje,
                 "parse_mode": "HTML"
             },
-            timeout=5
+            timeout=10
         )
-    except Exception:
-        pass
+        return r.status_code == 200
+    except Exception as e:
+        return False
 
 
 def supabase_post(tabla: str, datos: dict, supabase_key: str):
@@ -342,8 +352,8 @@ def widget_naomi_dashboard(groq_key: str, supabase_key: str):
         })
         st.session_state.naomi_turno += 1
 
-        # Cada 3 turnos: extraer y guardar datos
-        if st.session_state.naomi_turno % 3 == 0:
+        # Extraer y guardar datos en cada turno
+        if True:
             datos = extraer_datos_cliente(
                 [m for m in st.session_state.naomi_mensajes],
                 groq_key
