@@ -34,14 +34,14 @@ SERVICIOS = {
 }
 
 # ============================================================
-# CREDENTIALS — Lee desde Streamlit secrets
+# CREDENTIALS — Usa exactamente los mismos secrets que app.py
 # ============================================================
 def _get_secret(key, default=""):
+    """Idéntica a get_secret() de app.py"""
     try:
-        val = st.secrets.get(key, "")
-        if val: return val.strip()
-    except: pass
-    return os.getenv(key, default).strip()
+        return st.secrets.get(key, os.getenv(key, default))
+    except:
+        return os.getenv(key, default)
 
 def _telegram_token():
     return _get_secret("TELEGRAM_BOT_TOKEN", "8795518431:AAGVIGSbtk7FhK4qBKCCY0HZ5ET7bd8EQTQ")
@@ -50,7 +50,7 @@ def _telegram_chat():
     return _get_secret("TELEGRAM_CHAT_ID_ADMIN", "1773051960")
 
 def _supabase_key():
-    return _get_secret("SUPABASE_ANON_KEY", "")
+    return _get_secret("SUPABASE_ANON_KEY", _get_secret("SUPABASE_KEY", ""))
 
 # ============================================================
 # HELPERS
@@ -298,6 +298,10 @@ def procesar_y_notificar(mensajes: list, groq_key: str, supa_key: str = ""):
         if lead and lead.get("id"):
             lead_id = lead["id"]
             st.session_state.naomi_lead_id = lead_id
+            st.info(f"📋 Lead guardado: {lead_id[:8]}...")
+        else:
+            skey = _supabase_key()
+            st.warning(f"⚠️ Lead no guardado. Supabase key: {'OK' if len(skey)>10 else 'VACÍA — revisar secrets'}")
 
     # 2. Guardar solicitud de visita
     historial_txt = "\n".join([
@@ -341,10 +345,14 @@ def procesar_y_notificar(mensajes: list, groq_key: str, supa_key: str = ""):
     ok = enviar_telegram(msg_telegram)
     st.session_state.naomi_solicitud_guardada = True
 
+    # Diagnóstico visible para admin
     if ok:
-        st.success("✅ Solicitud registrada. El equipo te contactará hoy antes de las 6pm.")
+        st.success("✅ Solicitud registrada. Un especialista te contactará en el transcurso del día.")
     else:
-        st.warning("⚠️ Solicitud guardada pero hubo un problema con la notificación.")
+        token = _telegram_token()
+        chat = _telegram_chat()
+        skey = _supabase_key()
+        st.error(f"⚠️ Error Telegram. Token: {'OK' if len(token)>10 else 'VACÍO'} | Chat: {'OK' if chat else 'VACÍO'} | Supa: {'OK' if len(skey)>10 else 'VACÍA'}")
 
 # ============================================================
 # WIDGET NAOMI — Dashboard
