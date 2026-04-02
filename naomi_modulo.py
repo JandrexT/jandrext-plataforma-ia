@@ -1,7 +1,6 @@
 # ============================================================
-# MÓDULO NAOMI — Asistente Virtual JandrexT
-# Integrar en app.py de jandrext-ia
-# Visible para todos los roles: Admin, Especialista, Asesor, Aliado
+# MÓDULO NAOMI v2 — Asistente Virtual JandrexT
+# Flujo corregido: Telegram + Supabase + Agenda al agendar
 # ============================================================
 
 import streamlit as st
@@ -10,21 +9,20 @@ import json
 import uuid
 from datetime import datetime
 import pytz
+import os
 
-# ============================================================
-# CONFIGURACIÓN
-# ============================================================
 BOGOTA_TZ = pytz.timezone("America/Bogota")
+SUPABASE_URL = "https://ktzgkueikwzhyhpfqqwg.supabase.co"
 
 HORARIO = {
-    "semana": {"inicio": 8, "fin": 18},   # Lun-Vie
-    "sabado": {"inicio": 8, "fin": 13},    # Sábado
+    "semana": {"inicio": 8, "fin": 18},
+    "sabado": {"inicio": 8, "fin": 13},
 }
 
 COBERTURA = [
     "bogotá", "bogota", "soacha", "chía", "chia",
     "cajicá", "cajica", "mosquera", "funza", "madrid",
-    "facatativá", "facatativa"
+    "facatativá", "facatativa", "colombia"
 ]
 
 SERVICIOS = {
@@ -35,18 +33,24 @@ SERVICIOS = {
     "otro": "Otro servicio",
 }
 
-SUPABASE_URL = "https://ktzgkueikwzhyhpfqqwg.supabase.co"
-
-def _get_telegram_creds():
-    import os
+# ============================================================
+# CREDENTIALS — Lee desde Streamlit secrets
+# ============================================================
+def _get_secret(key, default=""):
     try:
-        token = st.secrets.get("TELEGRAM_BOT_TOKEN", "").strip() or os.getenv("TELEGRAM_BOT_TOKEN", "8795518431:AAGVIGSbtk7FhK4qBKCCY0HZ5ET7bd8EQTQ")
-        chat_id = st.secrets.get("TELEGRAM_CHAT_ID_ADMIN", "").strip() or os.getenv("TELEGRAM_CHAT_ID_ADMIN", "1773051960")
-    except:
-        token = os.getenv("TELEGRAM_BOT_TOKEN", "8795518431:AAGVIGSbtk7FhK4qBKCCY0HZ5ET7bd8EQTQ")
-        chat_id = os.getenv("TELEGRAM_CHAT_ID_ADMIN", "1773051960")
-    return token.strip(), chat_id.strip()
+        val = st.secrets.get(key, "")
+        if val: return val.strip()
+    except: pass
+    return os.getenv(key, default).strip()
 
+def _telegram_token():
+    return _get_secret("TELEGRAM_BOT_TOKEN", "8795518431:AAGVIGSbtk7FhK4qBKCCY0HZ5ET7bd8EQTQ")
+
+def _telegram_chat():
+    return _get_secret("TELEGRAM_CHAT_ID_ADMIN", "1773051960")
+
+def _supabase_key():
+    return _get_secret("SUPABASE_ANON_KEY", "")
 
 # ============================================================
 # HELPERS
@@ -54,217 +58,313 @@ def _get_telegram_creds():
 def hora_bogota():
     return datetime.now(BOGOTA_TZ)
 
-
 def esta_en_horario():
     ahora = hora_bogota()
-    dia = ahora.weekday()  # 0=lun, 6=dom
+    dia = ahora.weekday()
     hora = ahora.hour
-    if dia == 6:  # Domingo
-        return False
-    if dia == 5:  # Sábado
-        return HORARIO["sabado"]["inicio"] <= hora < HORARIO["sabado"]["fin"]
+    if dia == 6: return False
+    if dia == 5: return HORARIO["sabado"]["inicio"] <= hora < HORARIO["sabado"]["fin"]
     return HORARIO["semana"]["inicio"] <= hora < HORARIO["semana"]["fin"]
 
-
 def validar_cobertura(ciudad: str) -> bool:
+    if not ciudad: return True  # si no hay ciudad, no bloqueamos
     c = ciudad.lower().strip()
     return any(z in c for z in COBERTURA)
 
-
-def enviar_telegram(mensaje: str):
+# ============================================================
+# TELEGRAM
+# ============================================================
+def enviar_telegram(mensaje: str) -> bool:
     try:
-        token, chat_id = _get_telegram_creds()
+        token = _telegram_token()
+        chat_id = _telegram_chat()
         r = requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={
-                "chat_id": chat_id,
-                "text": mensaje,
-                "parse_mode": "HTML"
-            },
+            json={"chat_id": chat_id, "text": mensaje, "parse_mode": "HTML"},
             timeout=10
         )
         return r.status_code == 200
     except Exception as e:
+        st.warning(f"⚠️ Error Telegram: {e}")
         return False
 
-
-def supabase_post(tabla: str, datos: dict, supabase_key: str):
+# ============================================================
+# SUPABASE
+# ============================================================
+def supa_post(tabla: str, datos: dict, key: str = "") -> dict:
     try:
-        res = requests.post(
+        if not key: key = _supabase_key()
+        r = requests.post(
             f"{SUPABASE_URL}/rest/v1/{tabla}",
             headers={
                 "Content-Type": "application/json",
-                "apikey": supabase_key,
-                "Authorization": f"Bearer {supabase_key}",
+                "apikey": key,
+                "Authorization": f"Bearer {key}",
                 "Prefer": "return=representation"
             },
             json=datos,
             timeout=10
         )
-        return res.json()[0] if res.ok else None
-    except Exception:
-        return None
+        if r.ok and r.text:
+            data = r.json()
+            return data[0] if isinstance(data, list) else data
+        return {}
+    except Exception as e:
+        return {}
 
+def supa_get(tabla: str, filtro: str = "", key: str = "") -> list:
+    try:
+        if not key: key = _supabase_key()
+        r = requests.get(
+            f"{SUPABASE_URL}/rest/v1/{tabla}{filtro}",
+            headers={"apikey": key, "Authorization": f"Bearer {key}"},
+            timeout=10
+        )
+        return r.json() if r.ok else []
+    except:
+        return []
+
+def supa_patch(tabla: str, filtro: str, datos: dict, key: str = ""):
+    try:
+        if not key: key = _supabase_key()
+        requests.patch(
+            f"{SUPABASE_URL}/rest/v1/{tabla}{filtro}",
+            headers={
+                "Content-Type": "application/json",
+                "apikey": key,
+                "Authorization": f"Bearer {key}"
+            },
+            json=datos,
+            timeout=10
+        )
+    except: pass
 
 # ============================================================
 # IA — GROQ
 # ============================================================
-PROMPT_NAOMI = """Eres Naomi, asistente virtual de JandrexT Soluciones Integrales, \
-empresa colombiana de seguridad electrónica y automatización con sede en Bogotá.
+PROMPT_NAOMI = """Eres Naomi, asistente virtual de JandrexT Soluciones Integrales,
+empresa colombiana de seguridad electrónica en Bogotá.
 
 PERSONALIDAD:
-- Empática, cálida y profesional. No vendes productos, acompañas al cliente a encontrar la solución que necesita.
-- Siempre escuchas primero antes de ofrecer soluciones.
-- Hablas en nombre del equipo: usa "podemos", "te colaboramos", "estamos aquí".
-- Lenguaje natural, colombiano, cercano pero profesional.
+- Empática, cálida, colombiana. Hablas en nombre del equipo: "podemos", "te colaboramos".
+- Escuchas primero. Generas valor antes de pedir datos.
 - Máximo 3 oraciones por respuesta. Concisa pero cálida.
-- Siempre cierras con: "Apasionados por el buen servicio ❤️ JandrexT"
+- Cierras siempre con: Apasionados por el buen servicio ❤️ JandrexT
 
-SERVICIOS (en orden de prioridad):
-1. CCTV / Videovigilancia
-2. Control de Acceso y Biometría
-3. Redes y Cableado Estructurado
-4. Cercas Eléctricas
-
+SERVICIOS (prioridad): CCTV, Control de Acceso, Redes, Cercas Eléctricas.
 COBERTURA: Bogotá, Soacha, Chía, Cajicá, Mosquera, Funza, Madrid, Facatativá.
 
-FLUJO:
-1. Escucha primero — entiende la necesidad antes de hablar de servicios
-2. Genera valor — explica brevemente cómo JandrexT puede ayudar
-3. Captura datos naturalmente: nombre → teléfono → ciudad → dirección → servicio
-4. Si quiere agendar: captura fecha y hora preferida
-5. Valida cobertura geográfica antes de confirmar
-6. Confirma que el equipo contactará ese mismo día antes de las 6pm
+FLUJO NATURAL:
+1. Escucha y entiende la necesidad
+2. Explica brevemente cómo JandrexT puede ayudar
+3. Pregunta nombre y teléfono de forma natural
+4. Si quiere visita técnica: pregunta dirección, fecha y hora preferida
+5. Confirma: "Nuestro equipo te contactará hoy antes de las 6pm para confirmar"
 
 REGLAS:
-- NUNCA des precios exactos. Di: "En la visita técnica gratuita te damos la cotización exacta."
-- Si la ciudad no tiene cobertura: sé empático y claro.
-- Fuera de horario (Lun-Vie 8am-6pm, Sáb 8am-1pm): recibe la solicitud, explica que confirman el próximo día hábil.
-- Si el cliente quiere cancelar o reprogramar: maneja con empatía y actualiza."""
+- NUNCA des precios. Di: "En la visita técnica gratuita te cotizamos."
+- Fuera de horario (Lun-Vie 8am-6pm, Sáb 8am-1pm): recibe solicitud, explica que confirman el próximo día hábil.
+- Si ciudad fuera de cobertura: sé empático y claro."""
 
 
 def llamar_groq(mensajes: list, groq_key: str) -> str:
     try:
-        res = requests.post(
+        r = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {groq_key}"
-            },
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {groq_key}"},
             json={
                 "model": "llama-3.3-70b-versatile",
-                "messages": [
-                    {"role": "system", "content": PROMPT_NAOMI},
-                    *mensajes
-                ],
+                "messages": [{"role": "system", "content": PROMPT_NAOMI}, *mensajes],
                 "max_tokens": 300,
                 "temperature": 0.7
             },
             timeout=15
         )
-        data = res.json()
-        return data["choices"][0]["message"]["content"]
-    except Exception as e:
-        return f"Disculpa, tuve un problema técnico momentáneo. ¿Puedes repetir tu mensaje? ❤️"
+        return r.json()["choices"][0]["message"]["content"]
+    except:
+        return "Disculpa, tuve un problema técnico. ¿Puedes repetir tu mensaje? ❤️"
 
 
-def extraer_datos_cliente(mensajes: list, groq_key: str) -> dict:
-    """Extrae datos del cliente de la conversación usando IA."""
+def extraer_datos(mensajes: list, groq_key: str) -> dict:
+    """Extrae datos del cliente desde la conversación."""
     try:
         historial = "\n".join([
-            f"{'Cliente' if m['role'] == 'user' else 'Naomi'}: {m['content']}"
-            for m in mensajes
+            f"{'Cliente' if m['role']=='user' else 'Naomi'}: {m['content']}"
+            for m in mensajes if m['role'] in ['user','assistant']
         ])
-        res = requests.post(
+        r = requests.post(
             "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {groq_key}"
-            },
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {groq_key}"},
             json={
                 "model": "llama-3.3-70b-versatile",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": """Analiza la conversación y extrae datos del cliente.
-Responde SOLO con JSON válido, sin markdown, sin explicación:
-{"nombre":"","telefono":"","ciudad":"","direccion":"","servicio":"cctv|acceso|redes|cercas|otro","fecha_preferida":"YYYY-MM-DD","hora_preferida":"HH:MM","quiere_agendar":false}
-Si no hay dato deja el campo vacío."""
-                    },
-                    {"role": "user", "content": historial}
-                ],
-                "max_tokens": 200,
+                "messages": [{
+                    "role": "system",
+                    "content": """Analiza la conversación y extrae datos del cliente.
+Responde SOLO JSON válido sin markdown:
+{"nombre":"","telefono":"","ciudad":"","direccion":"","servicio":"cctv|acceso|redes|cercas|otro","fecha_preferida":"YYYY-MM-DD","hora_preferida":"HH:MM","quiere_agendar":false,"resumen":""}
+Si no hay dato deja el campo vacío. quiere_agendar=true si el cliente menciona visita, instalación o quiere que vayan."""
+                }, {"role": "user", "content": historial}],
+                "max_tokens": 300,
                 "temperature": 0
             },
             timeout=10
         )
-        text = res.json()["choices"][0]["message"]["content"]
-        return json.loads(text.strip())
-    except Exception:
+        txt = r.json()["choices"][0]["message"]["content"].strip()
+        txt = txt.replace("```json","").replace("```","").strip()
+        return json.loads(txt)
+    except:
         return {}
 
+# ============================================================
+# GUARDAR EN AGENDA
+# ============================================================
+def crear_tarea_agenda(datos: dict, lead_id: str, supa_key: str = "") -> bool:
+    """Crea una tarea en la agenda de la plataforma."""
+    try:
+        nombre = datos.get("nombre", "Cliente sin nombre")
+        telefono = datos.get("telefono", "Sin teléfono")
+        servicio = SERVICIOS.get(datos.get("servicio", ""), datos.get("servicio", "Sin servicio"))
+        ciudad = datos.get("ciudad", "Bogotá")
+        direccion = datos.get("direccion", "Por confirmar")
+        fecha = datos.get("fecha_preferida", hora_bogota().strftime("%Y-%m-%d"))
+        hora = datos.get("hora_preferida", "09:00")
+
+        tarea = {
+            "tarea": f"Visita técnica — {nombre} · {servicio}",
+            "cliente": f"{nombre} ({telefono})",
+            "prioridad": "🟡 Normal (60h)",
+            "descripcion": f"Solicitud recibida por Naomi.\nNombre: {nombre}\nTeléfono: {telefono}\nDirección: {direccion}, {ciudad}\nServicio: {servicio}\nFecha preferida: {fecha} a las {hora}",
+            "estado": "pendiente",
+            "campo": True,
+            "checklist_tipo": servicio,
+            "checklist_items": [],
+            "fecha_limite": f"{fecha}T{hora}:00",
+            "asignados": ["Andrés Tapiero"],
+            "creado_por": "naomi-bot",
+            "satelite": "",
+            "seguimiento": False
+        }
+        result = supa_post("agenda", tarea, supa_key)
+        return bool(result)
+    except:
+        return False
 
 # ============================================================
-# WIDGET NAOMI — Para insertar en Dashboard
+# FLUJO PRINCIPAL — Notificar cuando quiere agendar
 # ============================================================
-def widget_naomi_dashboard(groq_key: str, supabase_key: str):
+def procesar_y_notificar(mensajes: list, groq_key: str, supa_key: str = ""):
     """
-    Widget de Naomi para el Dashboard principal.
-    Llamar desde el dashboard con:
-        from naomi_modulo import widget_naomi_dashboard
-        widget_naomi_dashboard(groq_key=GROQ_KEY, supabase_key=SUPABASE_KEY)
+    Extrae datos y notifica SOLO cuando el cliente quiere agendar.
+    Guarda lead + crea tarea en agenda + notifica Telegram.
     """
+    if st.session_state.get("naomi_solicitud_guardada"):
+        return  # Ya se procesó
 
-    # CSS personalizado — colores institucionales JandrexT (rojo/blanco)
+    datos = extraer_datos(mensajes, groq_key)
+    if not datos:
+        return
+
+    quiere_agendar = datos.get("quiere_agendar", False)
+    tiene_nombre = bool(datos.get("nombre"))
+    tiene_telefono = bool(datos.get("telefono"))
+
+    # Solo procesamos cuando quiere agendar y tenemos datos mínimos
+    if not quiere_agendar:
+        return
+
+    nombre = datos.get("nombre", "Cliente")
+    telefono = datos.get("telefono", "Sin teléfono")
+    ciudad = datos.get("ciudad", "Bogotá")
+    direccion = datos.get("direccion", "Por confirmar")
+    servicio = datos.get("servicio", "otro")
+    servicio_label = SERVICIOS.get(servicio, servicio)
+    fecha = datos.get("fecha_preferida", hora_bogota().strftime("%Y-%m-%d"))
+    hora_pref = datos.get("hora_preferida", "09:00")
+    resumen = datos.get("resumen", "")
+
+    # 1. Guardar lead en Supabase
+    lead_id = st.session_state.get("naomi_lead_id")
+    if not lead_id:
+        lead = supa_post("leads_chatbot", {
+            "nombre": nombre,
+            "telefono": telefono,
+            "ciudad": ciudad,
+            "direccion": direccion,
+            "servicio_interes": servicio,
+            "canal": "jandrext-ia",
+            "estado": "nuevo",
+            "mensaje_inicial": mensajes[1]["content"] if len(mensajes) > 1 else ""
+        }, supa_key)
+        if lead and lead.get("id"):
+            lead_id = lead["id"]
+            st.session_state.naomi_lead_id = lead_id
+
+    # 2. Guardar solicitud de visita
+    historial_txt = "\n".join([
+        f"{'Cliente' if m['role']=='user' else 'Naomi'}: {m['content']}"
+        for m in mensajes
+    ])
+    solicitud = supa_post("solicitudes_visita", {
+        "lead_id": lead_id,
+        "nombre_cliente": nombre,
+        "telefono_cliente": telefono,
+        "direccion": direccion,
+        "ciudad": ciudad,
+        "servicio": servicio,
+        "fecha_preferida": fecha,
+        "hora_preferida": hora_pref,
+        "estado": "pendiente",
+        "canal": "jandrext-ia",
+        "historial_conversacion": historial_txt
+    }, supa_key)
+
+    # 3. Crear tarea en Agenda
+    crear_tarea_agenda(datos, lead_id or "", supa_key)
+
+    # 4. Notificar Telegram — inmediato
+    msg_telegram = (
+        f"🔔 <b>Nueva Solicitud — Naomi JandrexT</b>\n\n"
+        f"👤 <b>{nombre}</b>\n"
+        f"📞 {telefono}\n"
+        f"📍 {direccion}, {ciudad}\n"
+        f"🔧 {servicio_label}\n"
+        f"📆 {fecha} a las {hora_pref}\n"
+    )
+    if resumen:
+        msg_telegram += f"💬 {resumen}\n"
+    msg_telegram += (
+        f"\n⏰ <b>Confirmar antes de las 6:00pm de hoy</b>\n"
+        f"📲 Canal: jandrext-ia\n"
+        f"🕐 {hora_bogota().strftime('%d/%m/%Y %H:%M')}"
+    )
+
+    ok = enviar_telegram(msg_telegram)
+    st.session_state.naomi_solicitud_guardada = True
+
+    if ok:
+        st.success("✅ Solicitud registrada. El equipo te contactará hoy antes de las 6pm.")
+    else:
+        st.warning("⚠️ Solicitud guardada pero hubo un problema con la notificación.")
+
+# ============================================================
+# WIDGET NAOMI — Dashboard
+# ============================================================
+def widget_naomi_dashboard(groq_key: str, supabase_key: str = ""):
+    """Widget de Naomi para el Dashboard principal."""
+
     st.markdown("""
     <style>
-    .naomi-header {
-        background: linear-gradient(135deg, #c0392b, #e74c3c);
-        border-radius: 12px 12px 0 0;
-        padding: 14px 18px;
-        display: flex;
-        align-items: center;
-        gap: 12px;
-    }
-    .naomi-title { color: white; font-weight: 700; font-size: 16px; margin: 0; }
-    .naomi-status { color: rgba(255,255,255,0.85); font-size: 12px; }
-    .naomi-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
-    .naomi-container {
-        border: 1px solid #e2e8f0;
-        border-radius: 12px;
-        overflow: hidden;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-        margin-bottom: 16px;
-    }
-    .msg-naomi {
-        background: #f8fafc;
-        border-left: 3px solid #e74c3c;
-        border-radius: 0 10px 10px 0;
-        padding: 10px 14px;
-        margin: 6px 0;
-        font-size: 14px;
-        color: #1e293b;
-    }
-    .msg-user {
-        background: linear-gradient(135deg, #c0392b, #e74c3c);
-        border-radius: 10px 10px 0 10px;
-        padding: 10px 14px;
-        margin: 6px 0 6px 40px;
-        font-size: 14px;
-        color: white;
-    }
-    .naomi-footer {
-        text-align: center;
-        padding: 8px;
-        font-size: 11px;
-        color: #94a3b8;
-        background: #f8fafc;
-        border-top: 1px solid #e2e8f0;
-    }
+    .naomi-container {border: 2px solid #cc0000; border-radius: 12px; overflow: hidden; margin-bottom: 16px;}
+    .naomi-header {background: linear-gradient(135deg, #c0392b, #e74c3c); padding: 14px 18px; display: flex; align-items: center; gap: 12px;}
+    .naomi-title {color: white; font-weight: 700; font-size: 16px; margin: 0;}
+    .naomi-status {color: rgba(255,255,255,0.85); font-size: 12px;}
+    .msg-naomi {background: #fff5f5; border-left: 3px solid #e74c3c; border-radius: 0 10px 10px 0; padding: 10px 14px; margin: 6px 0; font-size: 14px; color: #1e293b;}
+    .msg-user {background: linear-gradient(135deg, #c0392b, #e74c3c); border-radius: 10px 10px 0 10px; padding: 10px 14px; margin: 6px 0 6px 40px; font-size: 14px; color: white;}
+    .naomi-footer {text-align: center; padding: 8px; font-size: 11px; color: #94a3b8; border-top: 1px solid #f0f0f0;}
     </style>
     """, unsafe_allow_html=True)
 
-    # Inicializar estado de sesión
+    # Inicializar sesión
     if "naomi_mensajes" not in st.session_state:
         st.session_state.naomi_mensajes = []
         st.session_state.naomi_session_id = str(uuid.uuid4())
@@ -272,238 +372,126 @@ def widget_naomi_dashboard(groq_key: str, supabase_key: str):
         st.session_state.naomi_solicitud_guardada = False
         st.session_state.naomi_turno = 0
 
-        # Mensaje de bienvenida
         en_horario = esta_en_horario()
         if en_horario:
             bienvenida = "¡Hola, qué gusto saludarte! ❤️\nSoy Naomi. Estoy aquí para ayudarte a proteger lo que más te importa. ¿En qué te podemos colaborar hoy?"
         else:
-            bienvenida = "¡Hola, qué gusto saludarte! ❤️\nSoy Naomi. En este momento estamos fuera de horario (Lun-Vie 8am-6pm, Sáb 8am-1pm), pero con mucho gusto recibo tu solicitud y el equipo te contactará el próximo día hábil. ¿En qué te podemos colaborar?"
-        st.session_state.naomi_mensajes.append({
-            "role": "assistant",
-            "content": bienvenida
-        })
+            bienvenida = "¡Hola, qué gusto saludarte! ❤️\nSoy Naomi. Estamos fuera de horario (Lun-Vie 8am-6pm, Sáb 8am-1pm), pero con mucho gusto recibo tu solicitud y el equipo te contactará el próximo día hábil. ¿En qué te podemos colaborar?"
+        st.session_state.naomi_mensajes.append({"role": "assistant", "content": bienvenida})
 
     en_horario = esta_en_horario()
 
     # Header
     st.markdown(f"""
     <div class="naomi-container">
-        <div class="naomi-header">
-            <span style="font-size:24px;">🤖</span>
-            <div>
-                <p class="naomi-title">Naomi — Asistente JandrexT</p>
-                <p class="naomi-status">
-                    <span class="naomi-dot" style="background:{'#4ade80' if en_horario else '#fbbf24'};"></span>
-                    {'En línea' if en_horario else 'Fuera de horario — recibimos tu solicitud'}
-                </p>
-            </div>
+      <div class="naomi-header">
+        <span style="font-size:24px;">🤖</span>
+        <div>
+          <p class="naomi-title">Naomi — Asistente JandrexT</p>
+          <p class="naomi-status">
+            <span style="width:8px;height:8px;border-radius:50%;background:{'#4ade80' if en_horario else '#fbbf24'};display:inline-block;margin-right:4px;"></span>
+            {'En línea' if en_horario else 'Fuera de horario — recibimos tu solicitud'}
+          </p>
         </div>
+      </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Historial de mensajes
-    with st.container():
-        for msg in st.session_state.naomi_mensajes:
-            if msg["role"] == "assistant":
-                st.markdown(f'<div class="msg-naomi">🤖 {msg["content"]}</div>', unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div class="msg-user">👤 {msg["content"]}</div>', unsafe_allow_html=True)
+    # Historial mensajes
+    for msg in st.session_state.naomi_mensajes:
+        if msg["role"] == "assistant":
+            st.markdown(f'<div class="msg-naomi">🤖 {msg["content"]}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="msg-user">👤 {msg["content"]}</div>', unsafe_allow_html=True)
 
-    # Input del usuario
+    # Input
     col1, col2 = st.columns([5, 1])
     with col1:
         user_input = st.text_input(
-            "Escribe tu mensaje",
+            "Mensaje",
             key=f"naomi_input_{st.session_state.naomi_turno}",
-            placeholder="Cuéntanos qué necesitas...",
+            placeholder="Escríbenos, estamos para colaborarte...",
             label_visibility="collapsed"
         )
     with col2:
         enviar = st.button("Enviar ❤️", key=f"naomi_btn_{st.session_state.naomi_turno}", use_container_width=True)
 
-    # Botón limpiar chat
-    if st.button("🔄 Nueva conversación", key="naomi_reset"):
-        for key in ["naomi_mensajes", "naomi_session_id", "naomi_lead_id",
-                    "naomi_solicitud_guardada", "naomi_turno"]:
-            if key in st.session_state:
-                del st.session_state[key]
-        st.rerun()
+    col_reset, col_info = st.columns([1, 2])
+    with col_reset:
+        if st.button("🔄 Nueva conversación", key="naomi_reset"):
+            for key in list(st.session_state.keys()):
+                if key.startswith("naomi_"):
+                    del st.session_state[key]
+            st.rerun()
+    with col_info:
+        if st.session_state.get("naomi_solicitud_guardada"):
+            st.success("✅ Solicitud registrada en agenda")
 
     # Procesar mensaje
     if enviar and user_input.strip():
-        # Agregar mensaje del usuario
-        st.session_state.naomi_mensajes.append({
-            "role": "user",
-            "content": user_input.strip()
-        })
+        st.session_state.naomi_mensajes.append({"role": "user", "content": user_input.strip()})
 
-        # Llamar a Naomi (IA)
         with st.spinner("Naomi está escribiendo..."):
-            historial_ia = [
-                {"role": m["role"], "content": m["content"]}
-                for m in st.session_state.naomi_mensajes
-            ]
+            historial_ia = [{"role": m["role"], "content": m["content"]} for m in st.session_state.naomi_mensajes]
             respuesta = llamar_groq(historial_ia, groq_key)
 
-        # Agregar respuesta
-        st.session_state.naomi_mensajes.append({
-            "role": "assistant",
-            "content": respuesta
-        })
+        st.session_state.naomi_mensajes.append({"role": "assistant", "content": respuesta})
         st.session_state.naomi_turno += 1
 
-        # Extraer y guardar datos en cada turno
-        if True:
-            datos = extraer_datos_cliente(
-                [m for m in st.session_state.naomi_mensajes],
-                groq_key
-            )
-
-            # Guardar lead si hay nombre y teléfono
-            if datos.get("nombre") and datos.get("telefono") and not st.session_state.naomi_lead_id:
-                lead = supabase_post("leads_chatbot", {
-                    "nombre": datos.get("nombre", ""),
-                    "telefono": datos.get("telefono", ""),
-                    "ciudad": datos.get("ciudad", ""),
-                    "direccion": datos.get("direccion", ""),
-                    "servicio_interes": datos.get("servicio", "desconocido"),
-                    "canal": "jandrext-ia",
-                    "estado": "nuevo",
-                    "mensaje_inicial": st.session_state.naomi_mensajes[1]["content"] if len(st.session_state.naomi_mensajes) > 1 else ""
-                }, supabase_key)
-
-                if lead and lead.get("id"):
-                    st.session_state.naomi_lead_id = lead["id"]
-                    enviar_telegram(
-                        f"🔔 <b>Nuevo Lead — Naomi JandrexT</b>\n\n"
-                        f"👤 <b>{datos.get('nombre')}</b>\n"
-                        f"📞 {datos.get('telefono')}\n"
-                        f"🏙️ {datos.get('ciudad', 'Sin ciudad')}\n"
-                        f"🔧 {SERVICIOS.get(datos.get('servicio', ''), datos.get('servicio', 'Sin servicio'))}\n"
-                        f"📲 Canal: jandrext-ia\n"
-                        f"🕐 {hora_bogota().strftime('%d/%m/%Y %H:%M')}"
-                    )
-
-            # Guardar solicitud de visita
-            if (datos.get("quiere_agendar") and
-                datos.get("nombre") and datos.get("telefono") and
-                datos.get("direccion") and datos.get("fecha_preferida") and
-                not st.session_state.naomi_solicitud_guardada):
-
-                ciudad = datos.get("ciudad", "Bogotá")
-                if validar_cobertura(ciudad):
-                    historial_texto = "\n".join([
-                        f"{'Cliente' if m['role'] == 'user' else 'Naomi'}: {m['content']}"
-                        for m in st.session_state.naomi_mensajes
-                    ])
-                    solicitud = supabase_post("solicitudes_visita", {
-                        "lead_id": st.session_state.naomi_lead_id,
-                        "nombre_cliente": datos.get("nombre"),
-                        "telefono_cliente": datos.get("telefono"),
-                        "direccion": datos.get("direccion"),
-                        "ciudad": ciudad,
-                        "servicio": datos.get("servicio", "otro"),
-                        "fecha_preferida": datos.get("fecha_preferida"),
-                        "hora_preferida": datos.get("hora_preferida", "09:00"),
-                        "estado": "pendiente",
-                        "canal": "jandrext-ia",
-                        "historial_conversacion": historial_texto
-                    }, supabase_key)
-
-                    if solicitud and solicitud.get("id"):
-                        st.session_state.naomi_solicitud_guardada = True
-                        enviar_telegram(
-                            f"📅 <b>Nueva Solicitud de Visita — Naomi</b>\n\n"
-                            f"👤 <b>{datos.get('nombre')}</b>\n"
-                            f"📞 {datos.get('telefono')}\n"
-                            f"📍 {datos.get('direccion')}, {ciudad}\n"
-                            f"🔧 {SERVICIOS.get(datos.get('servicio', ''), 'Sin servicio')}\n"
-                            f"📆 {datos.get('fecha_preferida')} a las {datos.get('hora_preferida', '09:00')}\n\n"
-                            f"⏰ <b>Asignar antes de las 6:00pm de hoy</b>\n"
-                            f"🆔 ID: {solicitud['id'][:8]}"
-                        )
+        # Analizar y notificar si quiere agendar
+        if not st.session_state.get("naomi_solicitud_guardada"):
+            procesar_y_notificar(st.session_state.naomi_mensajes, groq_key, supabase_key)
 
         st.rerun()
 
     # Footer
-    st.markdown("""
-    <div class="naomi-footer">
-        Apasionados por el buen servicio ❤️ JandrexT Soluciones Integrales
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown('<div class="naomi-footer">Apasionados por el buen servicio ❤️ JandrexT Soluciones Integrales</div>', unsafe_allow_html=True)
 
 
 # ============================================================
-# PANEL DE DESPACHO — Torre de Control (solo Admin)
+# PANEL TORRE DE CONTROL — Solo Admin
 # ============================================================
-def panel_torre_control(supabase_key: str, rol: str):
-    """Panel de despacho visible solo para Administrador."""
+def panel_torre_control(supabase_key: str = "", rol: str = ""):
+    """Panel de despacho para el Administrador."""
     if rol != "Administrador":
         return
 
-    st.markdown("---")
-    st.subheader("🗼 Torre de Control — Solicitudes Naomi")
-
-    col1, col2, col3 = st.columns(3)
+    st.markdown("#### 🗼 Torre de Control")
 
     try:
-        # Cargar solicitudes
-        res = requests.get(
-            f"{SUPABASE_URL}/rest/v1/solicitudes_visita?order=creado_en.desc&limit=20",
-            headers={
-                "apikey": supabase_key,
-                "Authorization": f"Bearer {supabase_key}"
-            },
-            timeout=10
-        )
-        solicitudes = res.json() if res.ok else []
-
+        solicitudes = supa_get("solicitudes_visita", "?order=creado_en.desc&limit=15", supabase_key)
         pendientes = [s for s in solicitudes if s.get("estado") == "pendiente"]
-        asignadas = [s for s in solicitudes if s.get("estado") == "asignado"]
 
+        col1, col2, col3 = st.columns(3)
         col1.metric("📋 Pendientes", len(pendientes))
-        col2.metric("✅ Asignadas hoy", len(asignadas))
-        col3.metric("📊 Total solicitudes", len(solicitudes))
+        col2.metric("✅ Total hoy", len([s for s in solicitudes if s.get("creado_en","")[:10] == hora_bogota().strftime("%Y-%m-%d")]))
+        col3.metric("📊 Total", len(solicitudes))
 
         if pendientes:
-            st.warning(f"⚠️ Tienes {len(pendientes)} solicitud(es) sin asignar. Recuerda: límite hoy antes de las 6:00pm.")
+            st.warning(f"⚠️ {len(pendientes)} solicitud(es) sin asignar — límite 6:00pm")
 
-        for s in solicitudes[:10]:
+        for s in solicitudes[:8]:
             estado = s.get("estado", "pendiente")
-            color = {"pendiente": "🟡", "asignado": "🔵", "confirmado": "🟢", "completado": "⚫", "cancelado": "🔴"}.get(estado, "⚪")
-
-            with st.expander(f"{color} {s.get('nombre_cliente', 'Sin nombre')} — {s.get('servicio', '').upper()} — {s.get('fecha_preferida', '')}"):
-                c1, c2 = st.columns(2)
-                c1.write(f"📞 **Teléfono:** {s.get('telefono_cliente', '')}")
-                c1.write(f"📍 **Dirección:** {s.get('direccion', '')}, {s.get('ciudad', '')}")
-                c2.write(f"🕐 **Hora preferida:** {s.get('hora_preferida', '')}")
-                c2.write(f"📌 **Estado:** {estado}")
-
+            ico = {"pendiente": "🟡", "asignado": "🔵", "confirmado": "🟢", "completado": "⚫", "cancelado": "🔴"}.get(estado, "⚪")
+            with st.expander(f"{ico} {s.get('nombre_cliente','Sin nombre')} · {s.get('servicio','').upper()} · {s.get('fecha_preferida','')}"):
+                st.write(f"📞 **{s.get('telefono_cliente','')}** | 📍 {s.get('direccion','')}, {s.get('ciudad','')}")
+                st.write(f"🕐 {s.get('hora_preferida','')} | Estado: **{estado}**")
                 if estado == "pendiente":
-                    if st.button(f"✅ Asignar a Andrés Tapiero", key=f"asignar_{s['id']}"):
-                        requests.patch(
-                            f"{SUPABASE_URL}/rest/v1/solicitudes_visita?id=eq.{s['id']}",
-                            headers={
-                                "Content-Type": "application/json",
-                                "apikey": supabase_key,
-                                "Authorization": f"Bearer {supabase_key}"
-                            },
-                            json={
-                                "estado": "asignado",
-                                "fecha_asignacion": datetime.now(BOGOTA_TZ).isoformat(),
-                                "asignado_por": "Andrés Tapiero"
-                            },
-                            timeout=10
-                        )
+                    if st.button("✅ Asignar a Andrés", key=f"asig_{s['id']}"):
+                        supa_patch("solicitudes_visita", f"?id=eq.{s['id']}", {
+                            "estado": "asignado",
+                            "fecha_asignacion": datetime.now(BOGOTA_TZ).isoformat(),
+                            "asignado_por": "Andrés Tapiero"
+                        }, supabase_key)
                         enviar_telegram(
-                            f"✅ <b>Visita Asignada — Naomi</b>\n\n"
+                            f"✅ <b>Visita Asignada</b>\n\n"
                             f"👤 {s.get('nombre_cliente')}\n"
+                            f"📞 {s.get('telefono_cliente')}\n"
                             f"📍 {s.get('direccion')}, {s.get('ciudad')}\n"
                             f"📆 {s.get('fecha_preferida')} a las {s.get('hora_preferida')}\n"
-                            f"👷 Asignado a: Andrés Tapiero"
+                            f"👷 Asignado: Andrés Tapiero"
                         )
-                        st.success("✅ Solicitud asignada. Telegram enviado.")
+                        st.success("✅ Asignado. Telegram enviado.")
                         st.rerun()
-
     except Exception as e:
         st.error(f"Error cargando solicitudes: {e}")
