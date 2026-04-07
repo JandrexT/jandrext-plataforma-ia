@@ -2589,14 +2589,16 @@ elif sec=="testing" and rol=="admin":
 
         def crear_manual():
             r=supa("manuales","POST",{
-                "titulo":f"{PREFIJO} Manual de prueba {TS}",
-                "categoria":"Videovigilancia CCTV",
-                "contenido":f"{PREFIJO} Contenido de manual creado por testing automático JandrexT v16",
+                "titulo":f"{PREFIJO} Manual prueba {TS}",
+                "tipo":"usuario",
+                "sistema":"Testing automatico JandrexT v16",
+                "contenido":f"{PREFIJO} Contenido de manual de prueba automatica",
                 "creado_por":u["id"],
                 "creado_en":ahora().isoformat()
             })
-            ok_mn = bool(r and isinstance(r,list) and len(r)>0)
-            return ok_mn, "Manual técnico creado en BD" if ok_mn else f"Error: {str(r)[:60]}"
+            if r and isinstance(r,list) and len(r)>0:
+                return True, f"Manual creado ID:{r[0].get('id','?')}"
+            return False, f"Error: {str(r)[:80]}"
         resultados.append(t_run("Manuales — Crear manual de prueba", crear_manual))
 
         # ── FASE 10: Flujo LIQUIDACIONES ──────────────────────────────────────
