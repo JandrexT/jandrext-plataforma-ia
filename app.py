@@ -7,7 +7,6 @@ from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
-from naomi_modulo import widget_naomi_dashboard, panel_torre_control
 import pytz
 
 load_dotenv()
@@ -42,6 +41,7 @@ if Path("logo_jandrext.png").exists():
 
 # ── Supabase ──────────────────────────────────────────────────────────────────
 def get_secret(key, default=""):
+    """Obtiene secreto de st.secrets o variable de entorno"""
     try:
         return st.secrets.get(key, os.getenv(key, default))
     except:
@@ -203,6 +203,43 @@ def venice_fn(p):
 
 def mistral_fn(p):
     try:
+        t=time.time(); api_key=get_secret("MISTRAL_API_KEY")
+        if not api_key: return {"ia":"Mistral","icono":"🔴","respuesta":"Sin API key","tiempo":0,"ok":False}
+        h={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"}
+        r=req.post("https://api.mistral.ai/v1/chat/completions",
+            json={"model":"mistral-small-latest","messages":[{"role":"system","content":CONTEXTO},{"role":"user","content":p}],"max_tokens":1500},
+            headers=h,timeout=30)
+        if r.status_code==200:
+            return {"ia":"Mistral","icono":"🟡","respuesta":r.json()["choices"][0]["message"]["content"].strip(),"tiempo":round(time.time()-t,2),"ok":True}
+        return {"ia":"Mistral","icono":"🔴","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
+    except Exception as e: return {"ia":"Mistral","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
+
+def openrouter_fn(p):
+    try:
+        t=time.time(); api_key=get_secret("OPENROUTER_API_KEY")
+        if not api_key: return {"ia":"OpenRouter","icono":"🔴","respuesta":"Sin API key","tiempo":0,"ok":False}
+        h={"Authorization":f"Bearer {api_key}","Content-Type":"application/json",
+           "HTTP-Referer":"https://jandrext-ia.streamlit.app","X-Title":"JandrexT IA"}
+        r=req.post("https://openrouter.ai/api/v1/chat/completions",
+            json={"model":"mistralai/mistral-7b-instruct:free","messages":[{"role":"system","content":CONTEXTO},{"role":"user","content":p}],"max_tokens":1500},
+            headers=h,timeout=30)
+        if r.status_code==200:
+            return {"ia":"OpenRouter","icono":"🔷","respuesta":r.json()["choices"][0]["message"]["content"].strip(),"tiempo":round(time.time()-t,2),"ok":True}
+        return {"ia":"OpenRouter","icono":"🔴","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
+    except Exception as e: return {"ia":"OpenRouter","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
+
+def groq_simple(prompt):
+    try:
+        from groq import Groq
+        r=Groq(api_key=get_secret("GROQ_API_KEY")).chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role":"system","content":CONTEXTO},{"role":"user","content":prompt}],max_tokens=1500)
+        return r.choices[0].message.content.strip()
+    except: return ""
+
+def mistral_fn(p):
+    """Mistral AI — gratis via API oficial (mistral-small-latest)"""
+    try:
         t=time.time()
         api_key=get_secret("MISTRAL_API_KEY")
         if not api_key: return {"ia":"Mistral","icono":"🟡","respuesta":"Sin API key","tiempo":0,"ok":False}
@@ -219,6 +256,7 @@ def mistral_fn(p):
     except Exception as e: return {"ia":"Mistral","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
 
 def openrouter_fn(p):
+    """OpenRouter — acceso gratuito a múltiples modelos (Llama, Mistral, etc.)"""
     try:
         t=time.time()
         api_key=get_secret("OPENROUTER_API_KEY")
@@ -236,21 +274,16 @@ def openrouter_fn(p):
         return {"ia":"OpenRouter","icono":"🔴","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
     except Exception as e: return {"ia":"OpenRouter","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
 
-def groq_simple(prompt):
-    try:
-        from groq import Groq
-        r=Groq(api_key=get_secret("GROQ_API_KEY")).chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role":"system","content":CONTEXTO},{"role":"user","content":prompt}],max_tokens=1500)
-        return r.choices[0].message.content.strip()
-    except Exception as e: return f"❌ Error generando respuesta: {e}"
-
 def juez_fn(pregunta, respuestas):
+    """Sintetiza respuestas de múltiples IAs. Usa Gemini primero, luego Groq, luego mejor respuesta."""
     ok_resps = [r for r in respuestas if r["ok"]]
     if not ok_resps: return "No se obtuvo respuesta de ninguna fuente."
-    if len(ok_resps) == 1: return ok_resps[0]["respuesta"]
+    if len(ok_resps) == 1: return ok_resps[0]["respuesta"]  # Solo una IA, retornar directo
+    
     resumen = "\n\n".join([f"--- {r['ia']} ---\n{r['respuesta']}" for r in ok_resps])
     prompt_juez = f"{CONTEXTO}\nPregunta del usuario: \"{pregunta}\"\nRespuestas de diferentes fuentes:\n{resumen}\n\nSintetiza la mejor respuesta: empática, profesional, práctica. Sin mencionar las fuentes ni encabezados."
+    
+    # Intento 1: Gemini
     try:
         api_key = get_secret("GOOGLE_API_KEY")
         if api_key:
@@ -260,15 +293,20 @@ def juez_fn(pregunta, respuestas):
             if r.status_code==200:
                 return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
     except: pass
+    
+    # Intento 2: Groq como sintetizador
     try:
         return groq_simple(prompt_juez)
     except: pass
+    
+    # Último recurso: mejor respuesta disponible (la más larga)
     return max(ok_resps, key=lambda x: len(x["respuesta"]))["respuesta"]
 
 def ia_generar(prompt, modelo="gemini-2.0-flash"):
     try:
         api_key=get_secret("GOOGLE_API_KEY")
-        if not api_key:
+        if not api_key: 
+            # Fallback a Groq si no hay Gemini
             return groq_simple(prompt)
         payload={"contents":[{"parts":[{"text":CONTEXTO+"\n\n"+prompt}]}]}
         url=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
@@ -278,12 +316,26 @@ def ia_generar(prompt, modelo="gemini-2.0-flash"):
         return groq_simple(prompt)
     except Exception as e: return groq_simple(prompt)
 
+def groq_simple(prompt):
+    try:
+        from groq import Groq
+        r=Groq(api_key=get_secret("GROQ_API_KEY")).chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role":"system","content":CONTEXTO},{"role":"user","content":prompt}],max_tokens=1500)
+        return r.choices[0].message.content.strip()
+    except Exception as e: return f"❌ Error generando respuesta: {e}"
+
 def ia_extraer_doc(b64, tipo="imagen"):
+    """Extrae datos de RUT con Gemini vision, OpenRouter vision, o Groq desde texto PDF"""
     prompt_json = """Eres un asistente que extrae datos de documentos colombianos (RUT, NIT, cámara de comercio).
 Analiza el documento y devuelve SOLO un JSON válido con esta estructura exacta, sin texto adicional ni markdown:
 {"razon_social":"","nit":"","direccion":"","municipio":"","departamento":"","telefono":"","email":"","contacto":"","cargo_contacto":"","responsabilidad_fiscal":"","regimen_fiscal":""}
-Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones."""
+Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones.
+Para el campo telefono: incluye teléfono fijo, celular o cualquier número de contacto. Si hay varios, sepáralos con coma.
+Para el campo direccion: busca la dirección completa incluyendo calle, carrera, avenida, número, ciudad. En el RUT colombiano aparece en la sección de "Ubicación" o "Dirección"."""
+
     errores = []
+
     def parsear_json(txt):
         if not txt: return {}
         txt = txt.replace("```json","").replace("```","").strip()
@@ -292,6 +344,8 @@ Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones."""
             try: return json.loads(txt[s:e])
             except: pass
         return {}
+
+    # Intento 1: Gemini 2.0 flash con visión
     try:
         api_key = get_secret("GOOGLE_API_KEY")
         if api_key:
@@ -303,7 +357,14 @@ Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones."""
                 txt = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
                 res = parsear_json(txt)
                 if res.get("nit") or res.get("razon_social"): return res
-    except Exception as e: errores.append(f"Gemini: {str(e)[:50]}")
+            else:
+                errores.append(f"Gemini HTTP {r.status_code}")
+        else:
+            errores.append("Gemini sin API key")
+    except Exception as e:
+        errores.append(f"Gemini error: {str(e)[:50]}")
+
+    # Intento 2: OpenRouter con visión gratuita
     try:
         api_key = get_secret("OPENROUTER_API_KEY")
         if api_key:
@@ -320,7 +381,61 @@ Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones."""
                 txt = r.json()["choices"][0]["message"]["content"].strip()
                 res = parsear_json(txt)
                 if res.get("nit") or res.get("razon_social"): return res
-    except Exception as e: errores.append(f"OpenRouter: {str(e)[:50]}")
+            else:
+                errores.append(f"OpenRouter HTTP {r.status_code}")
+        else:
+            errores.append("OpenRouter sin API key")
+    except Exception as e:
+        errores.append(f"OpenRouter error: {str(e)[:50]}")
+
+    # Intento 3: Para PDFs — extraer texto y enviar a Groq (no requiere visión)
+    if tipo == "pdf":
+        try:
+            import base64 as b64mod, io
+            pdf_bytes = b64mod.b64decode(b64)
+            texto_pdf = ""
+            # Intento 1: pypdf
+            try:
+                from pypdf import PdfReader
+                reader = PdfReader(io.BytesIO(pdf_bytes))
+                texto_pdf = " ".join(p.extract_text() or "" for p in reader.pages[:4])[:4000]
+            except: pass
+            # Intento 2: pdfminer
+            if not texto_pdf:
+                try:
+                    from pdfminer.high_level import extract_text as pdfminer_extract
+                    texto_pdf = pdfminer_extract(io.BytesIO(pdf_bytes))[:4000]
+                except: pass
+            # Intento 3: PyMuPDF
+            if not texto_pdf:
+                try:
+                    import fitz
+                    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+                    texto_pdf = " ".join(page.get_text() for page in doc)[:4000]
+                except: pass
+
+            if texto_pdf and len(texto_pdf) > 50:
+                from groq import Groq
+                prompt_groq = f"""Extrae los datos de este texto de un documento colombiano (RUT/NIT).
+Devuelve SOLO JSON válido sin markdown:
+{{"razon_social":"","nit":"","direccion":"","municipio":"","departamento":"","telefono":"","email":"","contacto":"","cargo_contacto":"","responsabilidad_fiscal":"","regimen_fiscal":""}}
+
+Texto del documento:
+{texto_pdf}"""
+                r = Groq(api_key=get_secret("GROQ_API_KEY")).chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role":"user","content":prompt_groq}],
+                    max_tokens=500)
+                txt = r.choices[0].message.content.strip()
+                res = parsear_json(txt)
+                if res.get("nit") or res.get("razon_social"): return res
+                errores.append("Groq no encontró datos en el texto")
+            else:
+                errores.append("No se pudo extraer texto del PDF")
+        except Exception as e:
+            errores.append(f"Groq PDF: {str(e)[:50]}")
+
+    # Retornar errores para mostrar al usuario
     return {"_errores": " | ".join(errores)} if errores else {}
 
 def generar_pdf_html(titulo, contenido):
@@ -343,10 +458,13 @@ pre{{white-space:pre-wrap;line-height:1.6;}}
 <div class="ftr">JandrexT Soluciones Integrales · NIT: 80818905-3 · CL 80 No. 70C-67 Local 2, Bogotá · Apasionados por el buen servicio</div>
 </body></html>"""
 
-# ── Micrófono HTML5 ───────────────────────────────────────────────────────────
+# ── Micrófono HTML5 nativo ────────────────────────────────────────────────────
 def campo_voz_html5(label, key, height=100, placeholder="Escribe o usa el micrófono..."):
+    """Campo de texto con micrófono integrado — botón iniciar/detener"""
     if key not in st.session_state: st.session_state[key]=""
+
     uid = key.replace("-","_").replace(" ","_")
+
     mic_html = f"""
 <div style="margin-bottom:6px;">
   <button id="micBtn_{uid}" onclick="toggleMic_{uid}()" style="
@@ -393,6 +511,7 @@ function toggleMic_{uid}(){{
     if(!txt) return;
     txt=txt.trim();
     sta.innerHTML='<span style="color:#4ade80">✅ '+txt+'</span>';
+    // Insertar en el textarea de Streamlit
     var tas=window.parent.document.querySelectorAll('textarea');
     for(var i=0;i<tas.length;i++){{
       if(tas[i].getAttribute('aria-label')==='{label}'){{
@@ -420,6 +539,7 @@ function toggleMic_{uid}(){{
   micRec_{uid}.start();
 }}
 </script>"""
+
     st.components.v1.html(mic_html, height=55)
     val=st.text_area(label,value=st.session_state.get(key,""),
         height=height,key=f"ta_{key}",placeholder=placeholder)
@@ -427,61 +547,282 @@ function toggleMic_{uid}(){{
     return val
 
 def panel_voz_global(campos_disponibles, seccion_key):
+    """Panel de micrófono usando Web Speech API — botón Iniciar/Detener unificado"""
     if f"voz_{seccion_key}" not in st.session_state:
         st.session_state[f"voz_{seccion_key}"] = ""
+
     campos_lista = list(campos_disponibles.keys())
+    campos_str = "|".join(campos_lista)
     uid = seccion_key.replace("-","_")
+
     html_mic = f"""
 <div style="background:#0a0f00;border:1px solid #cc0000;border-radius:10px;padding:1rem;margin-bottom:8px;">
-  <div style="color:#cc0000;font-size:0.75rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">DICTAR POR VOZ</div>
-  <button id="btnToggle_{uid}" onclick="toggleRec_{uid}()" style="width:100%;background:#cc0000;color:#fff;border:none;border-radius:8px;padding:10px;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:8px;">🎤 Iniciar grabación</button>
-  <div id="status_{uid}" style="color:#888;font-size:12px;margin-bottom:6px;">Listo para grabar en Chrome/Edge</div>
-  <div id="preview_{uid}" style="background:#0a1a00;border:1px solid #166534;border-radius:6px;padding:8px;color:#4ade80;font-size:13px;min-height:36px;margin-bottom:8px;"></div>
+  <div style="color:#cc0000;font-size:0.75rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;">
+    DICTAR POR VOZ
+  </div>
+  <div style="display:flex;gap:8px;margin-bottom:8px;">
+    <button id="btnToggle_{uid}"
+      onclick="toggleRec_{uid}()"
+      style="flex:1;background:#cc0000;color:#fff;border:none;border-radius:8px;
+      padding:10px;font-size:14px;font-weight:700;cursor:pointer;">
+      🎤 Iniciar grabación
+    </button>
+  </div>
+  <div id="status_{uid}"
+    style="color:#888;font-size:12px;margin-bottom:6px;">
+    Listo para grabar en Chrome/Edge
+  </div>
+  <div id="preview_{uid}"
+    style="background:#0a1a00;border:1px solid #166534;border-radius:6px;
+    padding:8px;color:#4ade80;font-size:13px;min-height:36px;margin-bottom:8px;
+    word-wrap:break-word;">
+  </div>
   <div style="display:flex;gap:8px;align-items:center;">
-    <select id="campoSel_{uid}" style="flex:1;background:#1a0000;color:#ccc;border:1px solid #3a0000;border-radius:6px;padding:8px;font-size:13px;">
+    <select id="campoSel_{uid}"
+      style="flex:1;background:#1a0000;color:#ccc;border:1px solid #3a0000;
+      border-radius:6px;padding:8px;font-size:13px;">
       {chr(10).join(f'<option value="{cx}">{cx}</option>' for cx in campos_lista)}
     </select>
-    <button onclick="insertarTexto_{uid}()" style="background:#166534;color:#fff;border:none;border-radius:6px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;">Insertar</button>
-    <button onclick="limpiarTexto_{uid}()" style="background:#333;color:#888;border:none;border-radius:6px;padding:8px 10px;font-size:13px;cursor:pointer;">X</button>
+    <button onclick="insertarTexto_{uid}()"
+      style="background:#166534;color:#fff;border:none;border-radius:6px;
+      padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">
+      Insertar
+    </button>
+    <button onclick="limpiarTexto_{uid}()"
+      style="background:#333;color:#888;border:none;border-radius:6px;
+      padding:8px 10px;font-size:13px;cursor:pointer;">
+      X
+    </button>
   </div>
 </div>
+
 <script>
 (function() {{
-  var rec_{uid}=null,activo_{uid}=false,textoCapturado_{uid}='';
-  window.toggleRec_{uid}=function(){{
-    var btn=document.getElementById('btnToggle_{uid}');
-    var sta=document.getElementById('status_{uid}');
-    if(activo_{uid}){{if(rec_{uid})rec_{uid}.stop();return;}}
-    var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!SR){{sta.innerHTML='<span style="color:#f87171">⚠️ Usa Chrome o Edge</span>';return;}}
-    rec_{uid}=new SR();rec_{uid}.lang='es-CO';rec_{uid}.interimResults=true;rec_{uid}.continuous=true;
-    rec_{uid}.onstart=function(){{activo_{uid}=true;btn.textContent='⏹ Detener';btn.style.background='#7a0000';sta.innerHTML='<span style="color:#4ade80">🔴 Grabando...</span>';}};
-    rec_{uid}.onresult=function(e){{var txt=e.results[0][0].transcript;textoCapturado_{uid}=txt;document.getElementById('preview_{uid}').textContent=txt;sta.innerHTML='<span style="color:#4ade80">✅ '+txt+'</span>';}};
-    rec_{uid}.onerror=function(e){{sta.innerHTML='<span style="color:#f87171">Error: '+e.error+'</span>';activo_{uid}=false;btn.textContent='🎤 Iniciar grabación';btn.style.background='#cc0000';}};
-    rec_{uid}.onend=function(){{activo_{uid}=false;btn.textContent='🎤 Iniciar grabación';btn.style.background='#cc0000';}};
+  var rec_{uid} = null;
+  var activo_{uid} = false;
+  var textoCapturado_{uid} = '';
+
+  window.toggleRec_{uid} = function() {{
+    var btn = document.getElementById('btnToggle_{uid}');
+    var sta = document.getElementById('status_{uid}');
+    var pre = document.getElementById('preview_{uid}');
+    if (activo_{uid}) {{
+      if (rec_{uid}) rec_{uid}.stop();
+      return;
+    }}
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {{
+      sta.innerHTML = '<span style="color:#f87171">⚠️ Usa Chrome o Edge para el micrófono</span>';
+      return;
+    }}
+    rec_{uid} = new SR();
+    rec_{uid}.lang = 'es-CO';
+    rec_{uid}.interimResults = true;
+    rec_{uid}.continuous = true;
+    rec_{uid}.maxAlternatives = 1;
+    rec_{uid}.onstart = function() {{
+      activo_{uid} = true;
+      btn.textContent = '⏹ Detener';
+      btn.style.background = '#7a0000';
+      sta.innerHTML = '<span style="color:#4ade80">🔴 Grabando... habla ahora</span>';
+    }};
+    rec_{uid}.onresult = function(e) {{
+      var txt = e.results[0][0].transcript;
+      textoCapturado_{uid} = txt;
+      pre.textContent = txt;
+      sta.innerHTML = '<span style="color:#4ade80">✅ Captado: ' + txt + '</span>';
+    }};
+    rec_{uid}.onerror = function(e) {{
+      sta.innerHTML = '<span style="color:#f87171">Error: ' + e.error + ' — permite el micrófono</span>';
+      activo_{uid} = false;
+      btn.textContent = '🎤 Iniciar grabación';
+      btn.style.background = '#cc0000';
+    }};
+    rec_{uid}.onend = function() {{
+      activo_{uid} = false;
+      btn.textContent = '🎤 Iniciar grabación';
+      btn.style.background = '#cc0000';
+    }};
     rec_{uid}.start();
   }};
-  window.insertarTexto_{uid}=function(){{
-    var txt=textoCapturado_{uid};
-    if(!txt){{document.getElementById('status_{uid}').innerHTML='<span style="color:#facc15">Sin texto</span>';return;}}
-    var sel=document.getElementById('campoSel_{uid}').value;
-    var tas=window.parent.document.querySelectorAll('textarea');
-    for(var i=0;i<tas.length;i++){{
-      var lbl=tas[i].getAttribute('aria-label')||'';
-      if(lbl&&(lbl.indexOf(sel)>=0||sel.indexOf(lbl)>=0)){{
-        var setter=Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype,'value').set;
-        setter.call(tas[i],(tas[i].value?tas[i].value+' ':'')+txt);
-        tas[i].dispatchEvent(new Event('input',{{bubbles:true}}));
-        document.getElementById('status_{uid}').innerHTML='<span style="color:#4ade80">✅ Insertado</span>';
-        textoCapturado_{uid}='';break;
+
+  window.insertarTexto_{uid} = function() {{
+    var txt = textoCapturado_{uid};
+    var sta = document.getElementById('status_{uid}');
+    if (!txt) {{
+      sta.innerHTML = '<span style="color:#facc15">Sin texto — graba primero</span>';
+      return;
+    }}
+    var sel = document.getElementById('campoSel_{uid}').value;
+    var tas = window.parent.document.querySelectorAll('textarea');
+    var insertado = false;
+    for (var i = 0; i < tas.length; i++) {{
+      var lbl = tas[i].getAttribute('aria-label') || '';
+      if (lbl && (lbl.indexOf(sel) >= 0 || sel.indexOf(lbl) >= 0)) {{
+        var setter = Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype,'value').set;
+        var actual = tas[i].value;
+        setter.call(tas[i], (actual ? actual + ' ' : '') + txt);
+        tas[i].dispatchEvent(new Event('input', {{bubbles: true}}));
+        sta.innerHTML = '<span style="color:#4ade80">✅ Insertado en: ' + sel + '</span>';
+        textoCapturado_{uid} = '';
+        insertado = true;
+        break;
       }}
     }}
+    if (!insertado) {{
+      sta.innerHTML = '<span style="color:#facc15">Campo no encontrado — selecciona el campo primero</span>';
+    }}
   }};
-  window.limpiarTexto_{uid}=function(){{textoCapturado_{uid}='';document.getElementById('preview_{uid}').textContent='';document.getElementById('status_{uid}').textContent='Listo.';}};
+
+  window.limpiarTexto_{uid} = function() {{
+    textoCapturado_{uid} = '';
+    document.getElementById('preview_{uid}').textContent = '';
+    document.getElementById('status_{uid}').textContent = 'Listo para grabar.';
+  }};
 }})();
 </script>"""
+
     st.components.v1.html(html_mic, height=240, scrolling=False)
-    st.caption("💡 Si el texto no aparece automáticamente, cópialo del panel verde y pégalo.")
+
+    # Campo de texto para recibir el texto dictado manualmente si postMessage no funciona
+    st.caption("💡 Si el texto no aparece automáticamente en el campo, cópialo del panel verde y pégalo.")
+
+
+def campo_voz_html5(label, key, height=100, placeholder="Escribe o usa el micrófono..."):
+    """Campo de texto con micrófono integrado — botón iniciar/detener"""
+    if key not in st.session_state: st.session_state[key]=""
+
+    uid = key.replace("-","_").replace(" ","_")
+
+    mic_html = f"""
+<div style="margin-bottom:6px;">
+  <button id="micBtn_{uid}" onclick="toggleMic_{uid}()" style="
+    background:#cc0000;color:#fff;border:none;border-radius:8px;
+    padding:8px 18px;font-size:0.9rem;font-weight:700;cursor:pointer;
+    margin-right:8px;transition:all 0.2s;">
+    🎤 Iniciar grabación
+  </button>
+  <span id="micStatus_{uid}" style="font-size:0.8rem;color:#888;">
+    Listo — Chrome/Edge recomendado
+  </span>
+</div>
+<script>
+var micRec_{uid}=null, micActive_{uid}=false;
+function toggleMic_{uid}(){{
+  var btn=document.getElementById('micBtn_{uid}');
+  var sta=document.getElementById('micStatus_{uid}');
+  if(micActive_{uid}){{
+    if(micRec_{uid}) micRec_{uid}.stop();
+    micActive_{uid}=false;
+    btn.textContent='🎤 Iniciar grabación';
+    btn.style.background='#cc0000';
+    sta.textContent='Grabación detenida.';
+    return;
+  }}
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){{ sta.innerHTML='<span style="color:#f87171">⚠️ Usa Google Chrome o Edge</span>'; return; }}
+  micRec_{uid}=new SR();
+  micRec_{uid}.lang='es-CO';
+  micRec_{uid}.interimResults=true;
+  micRec_{uid}.continuous=true;
+  micRec_{uid}.maxAlternatives=1;
+  micRec_{uid}.onstart=function(){{
+    micActive_{uid}=true;
+    btn.textContent='⏹ Detener';
+    btn.style.background='#7a0000';
+    sta.innerHTML='<span style="color:#4ade80">🔴 Grabando... habla ahora</span>';
+  }};
+  micRec_{uid}.onresult=function(e){{
+    var txt='';
+    for(var i=e.resultIndex;i<e.results.length;i++){{
+      if(e.results[i].isFinal) txt+=e.results[i][0].transcript+' ';
+    }}
+    if(!txt) return;
+    txt=txt.trim();
+    sta.innerHTML='<span style="color:#4ade80">✅ '+txt+'</span>';
+    // Insertar en el textarea de Streamlit
+    var tas=window.parent.document.querySelectorAll('textarea');
+    for(var i=0;i<tas.length;i++){{
+      if(tas[i].getAttribute('aria-label')==='{label}'){{
+        var setter=Object.getOwnPropertyDescriptor(window.parent.HTMLTextAreaElement.prototype,'value').set;
+        setter.call(tas[i],txt);
+        tas[i].dispatchEvent(new Event('input',{{bubbles:true}}));
+        break;
+      }}
+    }}
+    micActive_{uid}=false;
+    btn.textContent='🎤 Iniciar grabación';
+    btn.style.background='#cc0000';
+  }};
+  micRec_{uid}.onerror=function(e){{
+    sta.innerHTML='<span style="color:#f87171">Error: '+e.error+' — permite el micrófono en Chrome</span>';
+    micActive_{uid}=false;
+    btn.textContent='🎤 Iniciar grabación';
+    btn.style.background='#cc0000';
+  }};
+  micRec_{uid}.onend=function(){{
+    micActive_{uid}=false;
+    btn.textContent='🎤 Iniciar grabación';
+    btn.style.background='#cc0000';
+  }};
+  micRec_{uid}.start();
+}}
+</script>"""
+
+    st.components.v1.html(mic_html, height=55)
+    val=st.text_area(label,value=st.session_state.get(key,""),
+        height=height,key=f"ta_{key}",placeholder=placeholder)
+    st.session_state[key]=val
+    return val
+
+def panel_voz_global(campos_disponibles, seccion_key):
+    """Panel de micrófono global — un solo mic por sección, envía al campo elegido"""
+    if f"voz_global_{seccion_key}" not in st.session_state:
+        st.session_state[f"voz_global_{seccion_key}"]=""
+
+    with st.expander("🎤 Dictar información por voz", expanded=False):
+        st.caption("Habla, luego elige el campo y presiona Añadir. Funciona en Chrome.")
+        try:
+            from streamlit_mic_recorder import speech_to_text
+            tv=speech_to_text(language="es",
+                start_prompt="🎤 Iniciar grabación",
+                stop_prompt="⏹️ Detener grabación",
+                just_once=True,
+                use_container_width=True,
+                key=f"mic_global_{seccion_key}")
+            if tv:
+                st.session_state[f"voz_global_{seccion_key}"]=tv
+                st.rerun()
+        except:
+            st.warning("⚠️ Instala streamlit-mic-recorder")
+            return
+
+        texto=st.session_state.get(f"voz_global_{seccion_key}","")
+        if texto:
+            st.markdown(f"""<div style="background:#0a1a00;border:1px solid #4ade80;
+                border-radius:8px;padding:0.8rem 1rem;margin:0.4rem 0;color:#4ade80;font-size:0.9rem;">
+                🎙️ <b>Texto captado:</b><br>{texto}</div>""", unsafe_allow_html=True)
+
+            campo_sel=st.selectbox("¿A qué campo añadir?",
+                list(campos_disponibles.keys()),
+                key=f"campo_sel_{seccion_key}")
+
+            c1,c2=st.columns(2)
+            with c1:
+                if st.button("➕ Añadir al campo",type="primary",
+                    use_container_width=True,key=f"add_voz_{seccion_key}"):
+                    campo_key=campos_disponibles[campo_sel]
+                    actual=st.session_state.get(campo_key,"")
+                    st.session_state[campo_key]=(actual+" "+texto).strip()
+                    st.session_state[f"voz_global_{seccion_key}"]=""
+                    st.rerun()
+            with c2:
+                if st.button("🗑️ Limpiar",use_container_width=True,
+                    key=f"clear_voz_{seccion_key}"):
+                    st.session_state[f"voz_global_{seccion_key}"]=""
+                    st.rerun()
+        else:
+            st.info("Presiona el botón y habla claramente en Chrome.")
 
 # ── Config página ─────────────────────────────────────────────────────────────
 st.set_page_config(page_title="JandrexT | Plataforma v16",page_icon="🔒",
@@ -490,51 +831,109 @@ st.set_page_config(page_title="JandrexT | Plataforma v16",page_icon="🔒",
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown(f"""<style>
 {FONTS_CSS}
-.logo-inst,.lema-inst,.sb-name,.h-name,.h-lema,.footer-lema{{font-family:'Disclaimer-Classic','Disclaimer-Plain',sans-serif !important;}}
-.lema-jenna,.sb-lema,.footer-lema-j{{font-family:'JennaSue',sans-serif !important;}}
+/* Fuentes institucionales SOLO para logo y lema */
+.logo-inst, .lema-inst, .sb-name, .h-name, .h-lema, .footer-lema {{
+    font-family:'Disclaimer-Classic','Disclaimer-Plain',sans-serif !important;}}
+.lema-jenna, .sb-lema, .footer-lema-j {{font-family:'JennaSue',sans-serif !important;}}
+
+/* Resto de la app: Inter legible */
 html,body,[class*="css"]{{font-family:'Inter','Helvetica Neue',Arial,sans-serif;}}
-.login-wrap{{max-width:520px;margin:2.5rem auto;background:#0f0000;border:1px solid #cc0000;border-radius:16px;padding:2.5rem;}}
-.header-inst{{background:#fff;border-radius:12px;padding:1rem 2rem;margin-bottom:1rem;border:2px solid #cc0000;display:flex;align-items:center;justify-content:space-between;gap:1.5rem;box-shadow:0 2px 12px rgba(204,0,0,0.15);}}
+
+/* LOGIN */
+.login-wrap{{max-width:520px;margin:2.5rem auto;background:#0f0000;
+    border:1px solid #cc0000;border-radius:16px;padding:2.5rem;}}
+.logo-login-wrap{{background:#fff;border-radius:10px;padding:1.8rem 2rem 1rem;
+    display:inline-block;text-align:center;margin-bottom:0.3rem;overflow:visible;}}
+.logo-login-j{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;
+    font-size:4rem;font-weight:900;letter-spacing:0;line-height:1;display:inline-block;
+    vertical-align:bottom;transform:scaleY(2);transform-origin:bottom center;}}
+.logo-login-mid{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#fff;
+    font-size:4.5rem;font-weight:900;letter-spacing:8px;line-height:1;display:inline-block;
+    -webkit-text-stroke:1.5px #cc0000;vertical-align:baseline;}}
+.logo-login-t{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;
+    font-size:4rem;font-weight:900;letter-spacing:0;line-height:1;display:inline-block;
+    vertical-align:bottom;transform:scaleY(2);transform-origin:bottom center;}}
+.logo-login-sub{{font-family:'Pax_Oceania_Regular','Georgia',serif;color:#333;
+    font-size:1rem;letter-spacing:5px;text-transform:uppercase;margin:0.5rem 0 0;display:block;}}
+.si-grande{{font-size:1.4rem;vertical-align:baseline;line-height:1;}}
+.logo-login-lema{{font-family:'JennaSue','jenna-sue__allfont_net_','Georgia',serif;
+    color:#cc0000;font-size:2rem;margin:0.2rem 0 0;font-style:italic;line-height:1.3;display:block;}}
+
+/* HEADER */
+.header-inst{{background:#fff;border-radius:12px;
+    padding:1rem 2rem;margin-bottom:1rem;border:2px solid #cc0000;
+    display:flex;align-items:center;justify-content:space-between;gap:1.5rem;
+    box-shadow:0 2px 12px rgba(204,0,0,0.15);}}
 .h-logo{{height:80px;width:auto;flex-shrink:0;}}
 .h-brand{{flex:1;}}
-.h-name{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;font-size:2.2rem;font-weight:900;letter-spacing:6px;margin:0;line-height:1.2;}}
+.h-name{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;font-size:2.2rem;
+    font-weight:900;letter-spacing:6px;margin:0;line-height:1.2;}}
 .h-acc{{color:#0a0000;}}
 .h-lema{{font-family:'JennaSue','Georgia',serif;color:#cc0000;font-size:1.1rem;margin:0.2rem 0;font-style:italic;}}
-.h-sub{{font-family:'Pax_Oceania_Regular','Georgia',serif;color:#666;font-size:0.75rem;letter-spacing:4px;text-transform:uppercase;margin:0.1rem 0;}}
+.h-sub{{font-family:'Pax_Oceania_Regular','Georgia',serif;color:#666;font-size:0.75rem;
+    letter-spacing:4px;text-transform:uppercase;margin:0.1rem 0;}}
 .h-user{{text-align:right;flex-shrink:0;}}
 .h-saludo{{font-family:'JennaSue','Georgia',serif;color:#cc0000;font-size:1.2rem;font-style:italic;}}
 .h-nombre{{color:#0a0000;font-weight:700;font-size:1.1rem;}}
 .h-rol{{color:#cc0000;font-size:0.8rem;letter-spacing:1px;text-transform:uppercase;}}
 .h-fecha{{color:#888;font-size:0.8rem;margin-top:0.2rem;}}
-.sb-wrap{{background:#fff;border:2px solid #cc0000;border-radius:10px;padding:0.8rem;text-align:center;margin-bottom:0.5rem;}}
-.sb-name{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;font-size:1.4rem;font-weight:900;margin:0;letter-spacing:4px;}}
+
+/* SIDEBAR */
+.sb-wrap{{background:#fff;border:2px solid #cc0000;border-radius:10px;
+    padding:0.8rem;text-align:center;margin-bottom:0.5rem;}}
+.sb-name{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;
+    font-size:1.4rem;font-weight:900;margin:0;letter-spacing:4px;}}
 .sb-acc{{color:#0a0000;}}
-.sb-sub{{font-family:'Pax_Oceania_Regular','Georgia',serif;color:#333;font-size:0.7rem;margin:0.1rem 0;letter-spacing:3px;text-transform:uppercase;}}
+.sb-sub{{font-family:'Pax_Oceania_Regular','Georgia',serif;color:#333;font-size:0.7rem;
+    margin:0.1rem 0;letter-spacing:3px;text-transform:uppercase;}}
 .sb-lema{{font-family:'JennaSue',sans-serif;color:#cc0000;font-size:0.95rem;margin:0.2rem 0 0;}}
-.ub{{background:#1a0000;border:1px solid #cc0000;border-radius:8px;padding:0.5rem 0.8rem;margin-bottom:0.5rem;text-align:center;}}
+.ub{{background:#1a0000;border:1px solid #cc0000;border-radius:8px;
+    padding:0.5rem 0.8rem;margin-bottom:0.5rem;text-align:center;}}
 .ub-n{{color:#ffcccc;font-size:0.9rem;font-weight:700;margin:0;}}
 .ub-r{{color:#cc0000;font-size:0.72rem;margin:0;text-transform:uppercase;letter-spacing:1px;}}
-.nav-title{{background:#1a0000;border:1px solid #cc0000;border-radius:6px;padding:0.3rem 0.7rem;color:#cc0000;font-size:0.72rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin:0.5rem 0 0.2rem;display:block;}}
+.nav-title{{background:#1a0000;border:1px solid #cc0000;border-radius:6px;
+    padding:0.3rem 0.7rem;color:#cc0000;font-size:0.72rem;font-weight:700;
+    letter-spacing:2px;text-transform:uppercase;margin:0.5rem 0 0.2rem;display:block;}}
+
+/* Botón activo en sidebar */
+.stButton>button[kind="secondary"]{{background:transparent;border:1px solid #333;color:#ccc;}}
+.stButton>button[kind="secondary"]:hover{{border-color:#cc0000;color:#fff;}}
+
+/* CARDS */
 .ia-card{{background:#0f0000;border:1px solid #2a0000;border-radius:10px;padding:0.8rem;}}
 .ia-card h4{{margin:0 0 0.2rem;font-size:0.95rem;color:#f0f0f0;font-weight:600;}}
 .badge-ok{{color:#4ade80;font-weight:600;font-size:0.82rem;}}
 .badge-err{{color:#f87171;font-weight:600;font-size:0.82rem;}}
 .t-seg{{color:#555;font-size:0.72rem;}}
-.resp-card{{background:#0f0000;border:2px solid #cc0000;border-radius:12px;padding:1.4rem;color:#f0f0f0;line-height:1.75;margin-top:0.5rem;}}
-.resp-titulo{{font-family:'Inter',sans-serif;color:#cc0000;font-size:0.7rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:0.8rem;}}
-.chat-u{{background:#1a0000;border:1px solid #cc0000;border-radius:12px 12px 4px 12px;padding:0.8rem 1rem;margin:0.3rem 0;color:#f0f0f0;font-size:0.95rem;}}
-.chat-ia{{background:#0a0a0a;border:1px solid #222;border-radius:12px 12px 12px 4px;padding:0.8rem 1rem;margin:0.3rem 0;color:#ddd;font-size:0.95rem;}}
+.resp-card{{background:#0f0000;border:2px solid #cc0000;border-radius:12px;
+    padding:1.4rem;color:#f0f0f0;line-height:1.75;margin-top:0.5rem;}}
+.resp-titulo{{font-family:'Inter',sans-serif;color:#cc0000;font-size:0.7rem;
+    font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:0.8rem;}}
+.chat-u{{background:#1a0000;border:1px solid #cc0000;border-radius:12px 12px 4px 12px;
+    padding:0.8rem 1rem;margin:0.3rem 0;color:#f0f0f0;font-size:0.95rem;}}
+.chat-ia{{background:#0a0a0a;border:1px solid #222;border-radius:12px 12px 12px 4px;
+    padding:0.8rem 1rem;margin:0.3rem 0;color:#ddd;font-size:0.95rem;}}
 .meta{{color:#555;font-size:0.72rem;margin-bottom:0.2rem;}}
-.tip{{background:#0a0f00;border-left:3px solid #cc0000;border-radius:0 6px 6px 0;padding:0.5rem 0.8rem;color:#999;font-size:0.82rem;margin:0.4rem 0;}}
+.tip{{background:#0a0f00;border-left:3px solid #cc0000;border-radius:0 6px 6px 0;
+    padding:0.5rem 0.8rem;color:#999;font-size:0.82rem;margin:0.4rem 0;}}
 .doc-borrador{{background:#0a0f0a;border:1px solid #166534;border-radius:10px;padding:1.2rem;}}
-.footer-inst{{background:#0a0000;border:1px solid #1a0000;border-radius:8px;padding:0.7rem;text-align:center;margin-top:1.5rem;color:#555;font-size:0.75rem;}}
+.footer-inst{{background:#0a0000;border:1px solid #1a0000;border-radius:8px;
+    padding:0.7rem;text-align:center;margin-top:1.5rem;color:#555;font-size:0.75rem;}}
 .footer-acc{{font-family:'Disclaimer-Classic',sans-serif;color:#cc0000;font-weight:700;}}
 .footer-lema-j{{font-family:'JennaSue',sans-serif;color:#cc4444;font-size:0.95rem;}}
 .divider{{border:none;border-top:1px solid #1a0000;margin:1rem 0;}}
 .garantia-ok{{color:#4ade80;font-size:0.8rem;}}
 .garantia-alerta{{color:#f87171;font-size:0.8rem;}}
-div[data-testid="stSidebar"] .stButton>button{{background:transparent;border:1px solid #2a0000;color:#ccc;border-radius:8px;text-align:left;padding:0.5rem 0.8rem;font-size:0.9rem;transition:all 0.2s;}}
-div[data-testid="stSidebar"] .stButton>button:hover{{background:#1a0000;border-color:#cc0000;color:#fff;}}
+
+/* SIDEBAR BOTÓN ACTIVO */
+div[data-testid="stSidebar"] .stButton>button{{
+    background:transparent;border:1px solid #2a0000;color:#ccc;
+    border-radius:8px;text-align:left;padding:0.5rem 0.8rem;
+    font-size:0.9rem;transition:all 0.2s;}}
+div[data-testid="stSidebar"] .stButton>button:hover{{
+    background:#1a0000;border-color:#cc0000;color:#fff;}}
+
+/* MÓVIL */
 @media(max-width:768px){{
     .header-inst{{flex-direction:column;padding:0.8rem;gap:0.5rem;}}
     .h-user{{text-align:left;}}
@@ -559,18 +958,38 @@ if not st.session_state.usuario:
     c1,c2,c3=st.columns([1,2,1])
     with c2:
         if logo_b64:
-            logo_login = f'<img src="data:image/png;base64,{logo_b64}" style="height:140px;width:auto;display:block;margin:0 auto 0.5rem;filter:drop-shadow(0 2px 8px rgba(0,0,0,0.3));"/>'
+            logo_login = f'<img src="data:image/png;base64,{logo_b64}" style="height:140px;width:auto;display:block;margin:0 auto 0.5rem;filter:drop-shadow(0 2px 8px rgba(0,0,0,0.3));"/>' 
         else:
             logo_login = '<div style="font-family:sans-serif;color:#cc0000;font-size:3rem;font-weight:900;text-align:center;">JandrexT</div>'
         st.markdown(f"""<div class="login-wrap">
         <div style="text-align:center;margin-bottom:1.5rem;">
             {logo_login}
-            <p style="font-family:\'JennaSue\',serif;color:#cc0000;font-size:2rem;margin:0.2rem 0;font-style:italic;">Apasionados por el buen servicio</p>
+            <p class="logo-login-lema">Apasionados por el buen servicio</p>
         </div></div>""", unsafe_allow_html=True)
         st.markdown("### 🔐 Iniciar sesión")
+        # Leer email guardado en localStorage via JS
+        recordar_js = """
+<script>
+(function(){
+    var saved = localStorage.getItem('jandrext_email');
+    if(saved){
+        // Intentar rellenar el campo de email
+        var inputs = window.parent.document.querySelectorAll('input[type="text"]');
+        if(inputs.length > 0){ 
+            var nativeSetter = Object.getOwnPropertyDescriptor(window.parent.HTMLInputElement.prototype,'value').set;
+            nativeSetter.call(inputs[0], saved);
+            inputs[0].dispatchEvent(new Event('input', {bubbles:true}));
+        }
+    }
+})();
+</script>"""
+        st.components.v1.html(recordar_js, height=0)
+
         saved_email = ""
-        try: saved_email = st.query_params.get("em","")
+        try:
+            saved_email = st.query_params.get("em","")
         except: pass
+
         email=st.text_input("Correo electrónico",value=saved_email,placeholder="usuario@jandrext.com")
         pwd=st.text_input("Contraseña",type="password")
         recordar=st.checkbox("Recordar en este dispositivo", value=bool(saved_email))
@@ -582,6 +1001,9 @@ if not st.session_state.usuario:
                     st.session_state.usuario=usuario
                     if recordar:
                         try: st.query_params["em"]=email.strip()
+                        except: pass
+                    else:
+                        try: st.query_params.pop("em",None)
                         except: pass
                     st.rerun()
                 else: st.error(error)
@@ -602,7 +1024,9 @@ with st.sidebar:
     </div>
     <div class="ub"><p class="ub-n">👤 {nombre}</p><p class="ub-r">{rol_label}</p></div>""",
     unsafe_allow_html=True)
+
     st.markdown('<span class="nav-title">📌 Navegación</span>',unsafe_allow_html=True)
+
     sec_actual=st.session_state.seccion
     if rol=="cliente":
         SECS=[("📋","requerimientos","Mis Solicitudes"),("📖","mis_manuales","Mis Manuales")]
@@ -615,12 +1039,14 @@ with st.sidebar:
               ("📖","manuales","Manuales"),("💼","ventas","Ventas"),
               ("🤝","aliados","Aliados"),("📊","liquidaciones","Liquidaciones"),
               ("👑","usuarios","Especialistas y Aliados"),("⚙️","config","Configuración")]
+
     for ico,key,label in SECS:
         es_activo = sec_actual==key
         btn_style = "primary" if es_activo else "secondary"
         prefijo = "▶ " if es_activo else ""
         if st.button(f"{ico} {prefijo}{label}",key=f"nav_{key}",
                      use_container_width=True,type=btn_style):
+            # Limpiar campos de voz al cambiar sección
             for k in list(st.session_state.keys()):
                 if k.startswith("ta_") or k.startswith("inp_"):
                     st.session_state[k]=""
@@ -628,7 +1054,9 @@ with st.sidebar:
             st.session_state.chat_activo=None
             st.rerun()
 
-    # Cargar configuración IAs
+    # IAs: configuración interna, invisible para el usuario
+    # Los toggles se gestionan desde Configuración (solo admin)
+    # Cargar configuración de IAs desde Supabase (persistente)
     if "ia_config_cargada" not in st.session_state:
         try:
             cfg=supa("configuracion_ia",filtro="?clave=eq.ia_config")
@@ -670,13 +1098,12 @@ with st.sidebar:
             st.warning("¿Confirmas? Presiona de nuevo.")
 
 # ── Header ────────────────────────────────────────────────────────────────────
-logo_tag=f'<img src="data:image/png;base64,{logo_b64}" class="h-logo"/>' if logo_b64 else ""
+logo_tag=f'<img src="data:image/png;base64,{logo_b64}" style="height:75px;width:auto;flex-shrink:0;"/>' if logo_b64 else ""
 st.markdown(f"""<div class="header-inst">
     {logo_tag}
     <div class="h-brand">
-        <p class="h-name">Jandre<span class="h-acc">x</span>T</p>
+        <p class="h-sub" style="margin-bottom:2px;">Plataforma v16.0</p>
         <p class="h-lema">Apasionados por el buen servicio</p>
-        <p class="h-sub">Soluciones Integrales · Plataforma v16.0</p>
     </div>
     <div class="h-user">
         <div class="h-saludo">{saludo},</div>
@@ -699,14 +1126,19 @@ def panel_consulta(chat_id, ctx="General"):
                 if st.button("🗑️",key=f"dm_{m['id']}"):
                     supa("mensajes_chat","DELETE",filtro=f"?id=eq.{m['id']}"); st.rerun()
         st.markdown('<hr class="divider">',unsafe_allow_html=True)
+
     st.markdown('<div class="tip">💡 Escriba su consulta o use el micrófono (Chrome/Edge). Presione Consultar al terminar.</div>',unsafe_allow_html=True)
+
     ik=f"inp_{chat_id}"
     if ik not in st.session_state: st.session_state[ik]=""
+
     campo_voz_html5("Tu consulta",ik,height=90,placeholder="Escribe o dicta su consulta técnica...")
     pregunta=st.session_state.get(ik,"")
+
     c1,c2,c3=st.columns([1,2,1])
     with c2:
         btn=st.button("🔍 Consultar",use_container_width=True,type="primary",key=f"btn_{chat_id}")
+
     if btn and pregunta.strip():
         fns=[]
         if usar_g: fns.append(lambda p: gemini_fn(p))
@@ -714,10 +1146,11 @@ def panel_consulta(chat_id, ctx="General"):
         if usar_v: fns.append(lambda p: venice_fn(p))
         if usar_m: fns.append(lambda p: mistral_fn(p))
         if usar_o: fns.append(lambda p: openrouter_fn(p))
-        if not fns: fns=[lambda p: groq_fn(p)]
+        if not fns: fns=[lambda p: groq_fn(p)]  # Groq siempre como fallback
         with st.spinner("Consultando..."):
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(fns)) as ex:
                 resultados=list(ex.map(lambda f:f(pregunta),fns))
+        # Solo admin en modo debug ve las tarjetas de IAs
         if rol=="admin" and st.session_state.get("ia_debug_mode",False):
             cols=st.columns(len(resultados))
             for i,res in enumerate(resultados):
@@ -736,11 +1169,12 @@ def panel_consulta(chat_id, ctx="General"):
             supa("mensajes_chat","POST",{"chat_id":chat_id,"pregunta":pregunta,
                 "sintesis":sintesis,"ias_usadas":[r["ia"] for r in ok]})
             st.session_state[ik]=""
+            st.session_state[ik]=""
             st.rerun()
     elif btn: st.warning("⚠️ Escribe o dicta una consulta.")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# INICIO — DASHBOARD CON NAOMI ❤️
+# CHATS
 # ══════════════════════════════════════════════════════════════════════════════
 if sec=="inicio":
     st.markdown("## 🏠 Panel Principal")
@@ -761,7 +1195,6 @@ if sec=="inicio":
                 <div style="font-size:2.5rem;font-weight:900;color:#cc0000;">{num}</div>
                 <div style="color:#ccc;font-size:0.85rem;">{label}</div></div>''',
                 unsafe_allow_html=True)
-
     st.markdown("<br>",unsafe_allow_html=True)
     col_a,col_b=st.columns(2)
     with col_a:
@@ -775,48 +1208,45 @@ if sec=="inicio":
     with col_b:
         st.markdown("### 📅 Agenda de hoy")
         agenda_hoy=supa("agenda",filtro=f"?fecha=eq.{hoy}&order=hora.asc") or []
+        if not isinstance(agenda_hoy, list): agenda_hoy=[]
         if not agenda_hoy:
             st.markdown('<div class="tip">Sin eventos para hoy.</div>',unsafe_allow_html=True)
         for ev in agenda_hoy:
             if not isinstance(ev, dict): continue
-            hora_ev = str(ev.get("hora","") or ev.get("hora_inicio","") or "")[:5]
-            titulo_ev = str(ev.get("titulo","") or ev.get("tarea","") or "Sin título")[:30]
+            # Buscar hora en múltiples campos posibles
+            hora_ev = ""
+            for campo_h in ["hora","hora_inicio","hora_tarea","time","horario"]:
+                val = ev.get(campo_h,"")
+                if val:
+                    hora_ev = str(val)[:5]
+                    break
+            # Buscar título en múltiples campos posibles
+            titulo_ev = ""
+            for campo_t in ["titulo","tarea","descripcion","nombre","title","asunto"]:
+                val = ev.get(campo_t,"")
+                if val:
+                    titulo_ev = str(val)[:35]
+                    break
+            if not titulo_ev: titulo_ev = "Sin título"
             st.markdown(f'''<div style="background:#0a0000;border-left:3px solid #cc0000;
                 padding:0.6rem 1rem;margin:0.3rem 0;border-radius:0 6px 6px 0;">
                 <span style="color:#cc0000;font-size:0.85rem;">{hora_ev}</span>
                 <span style="color:#fff;"> {titulo_ev}</span>
                 </div>''',unsafe_allow_html=True)
 
-    # ── Naomi — Asistente Virtual ❤️ ─────────────────────────────────────────
-    st.markdown("---")
-    st.markdown("### 🤖 Naomi — Asistente Virtual JandrexT")
-    col_naomi, col_torre = st.columns([3, 2])
-    with col_naomi:
-        widget_naomi_dashboard(
-            groq_key=get_secret("GROQ_API_KEY"),
-            supabase_key=SUPA_KEY,
-        )
-    with col_torre:
-        panel_torre_control(
-            supabase_key=SUPA_KEY,
-            rol=rol_label,
-        )
-    st.markdown("---")
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CHATS
-# ══════════════════════════════════════════════════════════════════════════════
 elif sec=="chat":
     st.markdown("## 💬 Chats")
     proyectos_list=supa("proyectos",filtro="?order=nombre.asc") or []
     proy_nombres=["Sin proyecto"]+[p["nombre"] for p in proyectos_list]
+
     cl,cc=st.columns([1,3])
     with cl:
         st.markdown('<span class="nav-title">Mis chats</span>',unsafe_allow_html=True)
         if st.button("➕ Nuevo chat",use_container_width=True):
             for k in list(st.session_state.keys()):
                 if k.startswith("inp_"): st.session_state[k]=""
-            n=supa("chats","POST",{"titulo":"Nuevo chat","usuario_id":u["id"]})
+            titulo_auto = f"Chat {ahora().strftime('%d/%m %H:%M')}"
+            n=supa("chats","POST",{"titulo":titulo_auto,"usuario_id":u["id"]})
             if n and isinstance(n,list):
                 st.session_state.chat_activo=n[0]["id"]; st.rerun()
         chats=supa("chats",filtro=f"?usuario_id=eq.{u['id']}&proyecto_id=is.null&order=creado_en.desc")
@@ -825,10 +1255,12 @@ elif sec=="chat":
                 cb,cm,cd=st.columns([3,1,1])
                 with cb:
                     if st.button(f"💬 {c.get('titulo','Chat')[:18]}",key=f"c_{c['id']}",use_container_width=True):
+                        # Limpiar campos al cambiar chat
                         for k in list(st.session_state.keys()):
                             if k.startswith("inp_"): st.session_state[k]=""
                         st.session_state.chat_activo=c["id"]; st.rerun()
                 with cm:
+                    # Mover a proyecto
                     if st.button("📁",key=f"mp_{c['id']}",help="Mover a proyecto"):
                         st.session_state[f"mover_{c['id']}"]=True
                 with cd:
@@ -839,6 +1271,8 @@ elif sec=="chat":
                             if st.session_state.chat_activo==c["id"]:
                                 st.session_state.chat_activo=None
                             st.rerun()
+
+                # Panel mover a proyecto
                 if st.session_state.get(f"mover_{c['id']}"):
                     proy_sel=st.selectbox("Mover a:",proy_nombres,key=f"ps_{c['id']}")
                     if st.button("✅ Confirmar",key=f"pc_{c['id']}"):
@@ -847,6 +1281,7 @@ elif sec=="chat":
                             supa("chats","PATCH",{"proyecto_id":pid_dest},f"?id=eq.{c['id']}")
                             st.session_state[f"mover_{c['id']}"]=False
                             st.success(f"✅ Movido a {proy_sel}"); st.rerun()
+
     with cc:
         cid=st.session_state.chat_activo
         if cid:
@@ -865,11 +1300,13 @@ elif sec=="proyectos":
     st.markdown("## 📁 Proyectos")
     aliados_list=supa("clientes",filtro="?order=nombre.asc") or []
     aliados_nombres=["Sin aliado","JandrexT (Proyecto interno)"]+[a["nombre"] for a in aliados_list]
+
     cl,cc=st.columns([1,3])
     with cl:
         st.markdown('<span class="nav-title">Proyectos</span>',unsafe_allow_html=True)
         if rol in ["admin","vendedor"]:
             with st.expander("➕ Nuevo proyecto"):
+                # Extracción desde foto
                 arch=st.file_uploader("📷 Subir foto/doc del proyecto",type=["jpg","jpeg","png","pdf"])
                 if arch and st.button("🔍 Extraer datos",key="ext_proy"):
                     with st.spinner("Extrayendo..."):
@@ -879,6 +1316,7 @@ elif sec=="proyectos":
                     if datos:
                         if datos.get("razon_social"): st.session_state["pn"]=datos.get("razon_social","")
                         st.success("✅ Datos extraídos")
+
                 pn=st.text_input("Nombre del proyecto *",key="pn")
                 pa=st.selectbox("Aliado",aliados_nombres,key="pa")
                 pt=st.selectbox("Tipo",["copropiedad","empresa","natural","administracion","interno"],key="pt")
@@ -896,6 +1334,7 @@ elif sec=="proyectos":
                             "fecha_garantia_equipos":str(fge),"fecha_garantia_instalacion":str(fgi),
                             "creado_por":u["id"]})
                         st.success("✅ Proyecto creado"); st.rerun()
+
         buscar_p=st.text_input("🔍 Buscar proyecto",key="bp")
         proyectos=supa("proyectos",filtro="?order=creado_en.desc") or []
         filtrados=[p for p in proyectos if not buscar_p or buscar_p.lower() in p.get("nombre","").lower()]
@@ -907,6 +1346,7 @@ elif sec=="proyectos":
                 st.session_state.proy_activo=p["id"]
                 st.session_state.proy_nombre=p["nombre"]
                 st.session_state.sc_activo=None; st.rerun()
+
     with cc:
         pid=st.session_state.proy_activo
         if pid:
@@ -925,10 +1365,12 @@ elif sec=="proyectos":
                         dias=(fd-hoy).days
                         c3.markdown(f'<span class="{"garantia-ok" if dias>30 else "garantia-alerta"}">{"✅" if dias>30 else "⚠️"} Garantía {lbl}: {dias}d</span>',unsafe_allow_html=True)
                     except: pass
+
             if puede_borrar(u):
                 if st.button("🗑️ Eliminar proyecto",key=f"del_p_{pid}"):
                     supa("proyectos","DELETE",filtro=f"?id=eq.{pid}")
                     st.session_state.proy_activo=None; st.rerun()
+
             tab1,tab2=st.tabs(["💬 Chats del proyecto","📄 Documentos del proyecto"])
             with tab1:
                 if st.button("➕ Nuevo chat del proyecto",key="nsc"):
@@ -973,6 +1415,7 @@ elif sec=="agenda":
     with col_f:
         if rol=="admin":
             st.markdown("### ➕ Nueva tarea")
+            
             a_t=campo_voz_html5("Tarea *","ag_tarea",height=80,placeholder="Describe la tarea...")
             a_al=st.selectbox("Aliado / Sitio *",aliados_nombres)
             a_li=st.selectbox("Línea de servicio",LINEAS)
@@ -993,6 +1436,7 @@ elif sec=="agenda":
                 for item in CHECKLISTS[a_li]:
                     checklist_items.append({"item":item,"completado":False})
                 st.caption(f"{len(checklist_items)} ítems")
+
             if st.button("👁️ Vista previa",use_container_width=True):
                 a_t_val=st.session_state.get("ag_tarea","")
                 if a_t_val.strip():
@@ -1001,6 +1445,7 @@ elif sec=="agenda":
                     st.info(f"**Vista previa:**\n{res}")
                     st.session_state["ag_listo"]=True
                 else: st.warning("⚠️ Escribe la tarea primero")
+
             if st.session_state.get("ag_listo"):
                 if st.button("✅ Confirmar y crear tarea",type="primary",use_container_width=True):
                     horas=36 if "Urgente" in a_pr else 60 if "Normal" in a_pr else 90
@@ -1022,6 +1467,7 @@ elif sec=="agenda":
                         st.session_state["ag_listo"]=False
                         st.success("✅ Tarea creada"); st.rerun()
         else: st.info("Solo el administrador puede crear tareas.")
+
     with col_l:
         st.markdown("### 📋 Tareas")
         c1,c2,c3=st.columns(3)
@@ -1074,10 +1520,13 @@ elif sec=="asistencia":
     st.markdown("## 👥 Asistencia y Campo")
     aliados_list=supa("clientes",filtro="?order=nombre.asc") or []
     aliados_nombres=["Sin aliado"]+[a["nombre"] for a in aliados_list]
+
     geo_html="""<style>
-    .gb{background:#cc0000;color:#fff;border:none;border-radius:12px;padding:0.9rem 1.2rem;font-size:1rem;font-weight:700;width:100%;cursor:pointer;margin:0.3rem 0;display:block;}
+    .gb{background:#cc0000;color:#fff;border:none;border-radius:12px;padding:0.9rem 1.2rem;
+        font-size:1rem;font-weight:700;width:100%;cursor:pointer;margin:0.3rem 0;display:block;}
     .gs{background:#1a1a1a;border:2px solid #cc0000;color:#fff;}
-    .gs-box{background:#0a0a0a;border:1px solid #333;border-radius:8px;padding:0.7rem;margin:0.4rem 0;color:#ccc;font-size:0.85rem;min-height:50px;}
+    .gs-box{background:#0a0a0a;border:1px solid #333;border-radius:8px;padding:0.7rem;
+        margin:0.4rem 0;color:#ccc;font-size:0.85rem;min-height:50px;}
     #mp{width:100%;height:180px;border-radius:8px;border:1px solid #cc0000;margin:0.4rem 0;}
     </style>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
@@ -1102,6 +1551,7 @@ elif sec=="asistencia":
     }
     </script>"""
     st.components.v1.html(geo_html,height=370,scrolling=False)
+
     with st.form("form_asist",clear_on_submit=True):
         c1,c2=st.columns(2)
         m_col=c1.text_input("👤 Especialista",value=nombre)
@@ -1117,15 +1567,25 @@ elif sec=="asistencia":
             emoji="✅" if m_tip=="entrada" else "🏁"
             telegram(f"{emoji} <b>{m_col}</b> — {m_tip}\n📍 {m_pro}\n📋 {m_tar}")
             st.success("✅ Registrado"); st.rerun()
+
     st.markdown('<hr class="divider">',unsafe_allow_html=True)
     st.markdown("### 📋 Informe de trabajo")
+
     inf_aliado=st.selectbox("Proyecto / Aliado",aliados_nombres,key="inf_ali")
     inf_serv=st.selectbox("Tipo de servicio",LINEAS,key="inf_serv")
-    panel_voz_global({"Trabajo realizado":"inf_desc","Materiales utilizados":"inf_elem","Pendientes":"inf_pend"},"asistencia")
-    inf_desc=campo_voz_html5("Descripción del trabajo","inf_desc",height=110,placeholder="Describe qué encontraste, qué hiciste y qué quedó...")
-    inf_elem=campo_voz_html5("los materiales utilizados","inf_elem",height=80,placeholder="Ej: 2 tornillos M8, 1 hidráulico Speedy M25...")
-    inf_pend=campo_voz_html5("los pendientes","inf_pend",height=80,placeholder="Qué falta, qué se necesita...")
+    panel_voz_global({
+        "Trabajo realizado": "inf_desc",
+        "Materiales utilizados": "inf_elem",
+        "Pendientes": "inf_pend"
+    }, "asistencia")
+    inf_desc=campo_voz_html5("Descripción del trabajo","inf_desc",height=110,
+        placeholder="Describe qué encontraste, qué hiciste y qué quedó...")
+    inf_elem=campo_voz_html5("los materiales utilizados","inf_elem",height=80,
+        placeholder="Ej: 2 tornillos M8, 1 hidráulico Speedy M25...")
+    inf_pend=campo_voz_html5("los pendientes","inf_pend",height=80,
+        placeholder="Qué falta, qué se necesita...")
     inf_visita=st.selectbox("¿Requiere otra visita?",["No","Sí — urgente","Sí — programada"])
+
     if st.button("📋 Generar informe",type="primary",use_container_width=True):
         desc_val=st.session_state.get("inf_desc","")
         if desc_val.strip():
@@ -1148,12 +1608,13 @@ Tono profesional y empático. Apasionados por el buen servicio."""
                 file_name=f"Informe_{ahora().strftime('%Y%m%d')}.html",mime="text/html")
             telegram(f"📋 <b>Informe generado</b>\n👤 {nombre}\n📍 {inf_aliado}\n🔧 {inf_serv}")
         else: st.warning("⚠️ Describe el trabajo realizado.")
+
     if rol=="admin":
         st.markdown('<hr class="divider">',unsafe_allow_html=True)
         st.markdown("### 🗺️ Especialistas en campo")
         hoy=ahora().strftime("%Y-%m-%d")
         regs=supa("asistencia",filtro=f"?fecha=gte.{hoy}T00:00:00&order=fecha.desc") or []
-        activos=[r for r in regs if r.get("ubicacion") and r["tipo"]=="entrada"]
+        activos=[r for r in regs if r.get("ubicacion") and r["tipo"]=="entrada" and not r.get("salida")]
         if activos:
             markers=""
             for r in activos:
@@ -1185,7 +1646,8 @@ elif sec=="aliados":
     with col_f:
         st.markdown("### ➕ Nuevo Aliado")
         st.info("💡 Sube el RUT o foto del documento para extraer datos automáticamente.")
-        arch=st.file_uploader("📄 Subir RUT, NIT o foto",type=["pdf","jpg","jpeg","png"])
+        arch=st.file_uploader("📄 Subir RUT, NIT o foto",type=["pdf","jpg","jpeg","png"],
+            label_visibility="visible")
         if arch:
             if st.button("🔍 Extraer datos del documento"):
                 with st.spinner("Extrayendo información..."):
@@ -1195,17 +1657,25 @@ elif sec=="aliados":
                 if datos and not datos.get("_errores"):
                     for k,v in datos.items():
                         if v and k != "_errores": st.session_state[f"ali_{k}"]=v
-                    st.success("✅ Datos extraídos"); st.rerun()
+                    st.success("✅ Datos extraídos — revise y complete si falta algo")
+                    st.rerun()
                 elif datos.get("_errores"):
                     st.error(f"⚠️ No se pudo extraer: {datos['_errores']}")
+                    st.info("💡 Configure GOOGLE_API_KEY o OPENROUTER_API_KEY en Streamlit Secrets para habilitar la extracción automática.")
                 else:
-                    st.warning("⚠️ No se encontraron datos. Ingrese manualmente.")
+                    st.warning("⚠️ No se encontraron datos en el documento. Intente con una imagen más clara o ingrese los datos manualmente.")
+
         def ali_field(k,label,placeholder=""):
-            if f"ali_{k}" not in st.session_state: st.session_state[f"ali_{k}"] = ""
+            # Sin value= para evitar conflicto con session_state key
+            if f"ali_{k}" not in st.session_state:
+                st.session_state[f"ali_{k}"] = ""
             return st.text_input(label,placeholder=placeholder,key=f"ali_{k}")
+
         a_rs=ali_field("razon_social","Razón Social *")
         a_nit=ali_field("nit","NIT / Identificación *")
         a_ti=st.selectbox("Tipo",["copropiedad","empresa","natural","administracion","otro"],key="ali_tipo")
+        if st.session_state.get("ali_tipo")=="otro":
+            st.text_input("¿Cuál tipo?",key="ali_tipo_otro")
         a_dir=ali_field("direccion","Dirección")
         a_mun=ali_field("municipio","Municipio")
         a_dep=ali_field("departamento","Departamento")
@@ -1216,12 +1686,15 @@ elif sec=="aliados":
         a_rf=ali_field("responsabilidad_fiscal","Responsabilidad Fiscal","R-99-PN")
         a_reg=ali_field("regimen_fiscal","Régimen Fiscal","49")
         a_not=st.text_area("Notas adicionales",key="ali_notas",height=60)
-        a_hor=campo_voz_html5("Horarios de atención","ali_horarios",height=70,placeholder="Ej: Lun-Vie 8am-12pm · Sáb 8am-12pm")
+        a_hor=campo_voz_html5("Horarios de atención","ali_horarios",height=70,
+            placeholder="Ej: Lun-Vie 8am-12pm / 2pm-6pm · Sáb 8am-12pm · Dom Cerrado")
+        st.caption("💡 También puedes subir una foto del horario y extraer los datos automáticamente")
+
         if st.button("💾 Guardar Aliado",type="primary",use_container_width=True):
             rs=st.session_state.get("ali_razon_social","")
             nit=st.session_state.get("ali_nit","")
             if rs and nit:
-                tipo_f=st.session_state.get("ali_tipo","")
+                tipo_f=st.session_state.get("ali_tipo_otro",st.session_state.get("ali_tipo","")) if st.session_state.get("ali_tipo")=="otro" else st.session_state.get("ali_tipo","")
                 res=supa("clientes","POST",{
                     "nombre":rs,"razon_social":rs,"nit":nit,"tipo":tipo_f,
                     "direccion":st.session_state.get("ali_direccion",""),
@@ -1233,12 +1706,14 @@ elif sec=="aliados":
                     "cargo_contacto":st.session_state.get("ali_cargo_contacto",""),
                     "responsabilidad_fiscal":st.session_state.get("ali_responsabilidad_fiscal",""),
                     "regimen_fiscal":st.session_state.get("ali_regimen_fiscal",""),
-                    "notas":a_not,"horarios":st.session_state.get("ali_horarios","")})
+                    "notas":a_not,
+                    "horarios":st.session_state.get("ali_horarios","")})
                 if res:
                     for k in list(st.session_state.keys()):
                         if k.startswith("ali_"): del st.session_state[k]
                     st.success("✅ Aliado guardado"); st.rerun()
             else: st.warning("⚠️ Razón Social y NIT son obligatorios")
+
     with col_l:
         st.markdown("### 📋 Aliados registrados")
         aliados=supa("clientes",filtro="?order=nombre.asc") or []
@@ -1276,12 +1751,16 @@ elif sec=="documentos" and tiene_modulo(u,"documentos"):
     doc_aliado=c1.selectbox("Aliado",aliados_nombres)
     doc_proy=c2.selectbox("Proyecto",proyectos_nombres)
     doc_linea=st.selectbox("Línea de servicio",LINEAS)
-    panel_voz_global({"Contenido del documento":"doc_cont"},"documentos")
-    doc_contenido=campo_voz_html5("Contenido del documento","doc_cont",height=150,placeholder="Describe equipos, actividades, valores...")
+    panel_voz_global({
+        "Contenido del documento": "doc_cont"
+    }, "documentos")
+    doc_contenido=campo_voz_html5("Contenido del documento","doc_cont",height=150,
+        placeholder="Describe equipos, actividades, valores...")
     c1,c2=st.columns(2)
     doc_valor=c1.number_input("Valor total (COP)",min_value=0,step=50000)
     doc_anticipo=c2.number_input("Anticipo (COP)",min_value=0,step=50000)
     aliado_data=next((a for a in aliados_list if a["nombre"]==doc_aliado),{})
+
     if st.button("👁️ Generar borrador",use_container_width=True,type="primary"):
         cont=st.session_state.get("doc_cont","")
         if cont.strip():
@@ -1303,6 +1782,7 @@ Firma: José Andrés Tapiero Gómez, Director de Proyectos."""
                 st.session_state["doc_borrador"]=borrador
                 st.session_state["doc_listo"]=True
         else: st.warning("⚠️ Describe el contenido.")
+
     if st.session_state.get("doc_listo"):
         st.markdown('<div class="doc-borrador">',unsafe_allow_html=True)
         borrador=st.text_area("✏️ Revisa y edita si necesitas",
@@ -1348,8 +1828,11 @@ elif sec=="manuales" and tiene_modulo(u,"manuales"):
             "Guía de Configuración y Contraseñas","Plan de Mantenimiento Preventivo",
             "Manual de Operación Diaria","Guía de Acceso Remoto"])
         m_lin=st.selectbox("Línea de servicio",LINEAS)
-        panel_voz_global({"Detalles del sistema":"man_det"},"manuales")
-        m_det=campo_voz_html5("Detalles específicos","man_det",height=130,placeholder="IP, contraseñas, equipos instalados...")
+        panel_voz_global({
+            "Detalles del sistema": "man_det"
+        }, "manuales")
+        m_det=campo_voz_html5("Detalles específicos","man_det",height=130,
+            placeholder="IP, contraseñas, equipos instalados...")
         m_cli=st.selectbox("Tipo de destinatario",["copropiedad","empresa","natural","administracion"])
         if st.button("📖 Generar manual",type="primary",use_container_width=True):
             det=st.session_state.get("man_det","")
@@ -1358,9 +1841,9 @@ elif sec=="manuales" and tiene_modulo(u,"manuales"):
                     prompt=f"""Crea un {m_tip} completo para JandrexT Soluciones Integrales.
 Aliado: {m_ali} | Sistema: {m_sis} | Línea: {m_lin} | Destinatario: {m_cli} | Fecha: {fecha_str()}
 Detalles: {det}
-Incluir: portada, índice, descripción, instrucciones paso a paso, credenciales, problemas comunes,
-mantenimiento preventivo, contacto: Andrés Tapiero 317 391 0621
-Tono: claro, empático. Apasionados por el buen servicio."""
+Incluir: portada, índice, descripción, instrucciones paso a paso (lenguaje simple),
+credenciales, problemas comunes, mantenimiento preventivo, contacto: Andrés Tapiero 317 391 0621
+Tono: claro, empático, sin tecnicismos innecesarios. Apasionados por el buen servicio."""
                     manual=ia_generar(prompt)
                     cid=next((a["id"] for a in aliados_list if a["nombre"]==m_ali),None)
                     supa("manuales","POST",{"titulo":f"{m_tip} — {m_sis}","tipo":m_tip,
@@ -1437,6 +1920,7 @@ elif sec=="biblioteca" and tiene_modulo(u,"biblioteca"):
             with st.expander(f"📌 {m.get('pregunta','')[:60]}... | {m.get('creado_en','')[:10]}"):
                 st.markdown(m.get("sintesis",""))
                 st.code(m.get("sintesis",""),language=None)
+                # Mover a proyecto
                 cb1,cb2=st.columns([3,1])
                 with cb1:
                     proy_dest=st.selectbox("📁 Mover a proyecto",proy_bib_nombres,key=f"pbib_{m['id']}")
@@ -1444,6 +1928,7 @@ elif sec=="biblioteca" and tiene_modulo(u,"biblioteca"):
                     if st.button("📁 Mover",key=f"mbib_{m['id']}",use_container_width=True):
                         pid_bib=next((p["id"] for p in proyectos_bib if p["nombre"]==proy_dest),None)
                         if pid_bib:
+                            # Crear chat en el proyecto con esta consulta
                             nuevo_chat=supa("chats","POST",{"titulo":m.get("pregunta","")[:50],
                                 "proyecto_id":pid_bib,"usuario_id":u["id"]})
                             if nuevo_chat and isinstance(nuevo_chat,list):
@@ -1510,7 +1995,7 @@ elif sec=="liquidaciones" and tiene_modulo(u,"liquidaciones"):
                     if st.button("🗑️",key=f"dl_{liq['id']}"): supa("liquidaciones","DELETE",filtro=f"?id=eq.{liq['id']}"); st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SOLICITUDES (Aliados)
+# SOLICITUDES
 # ══════════════════════════════════════════════════════════════════════════════
 elif sec in ["requerimientos","mis_manuales"]:
     st.markdown("## 🤝 Mis Solicitudes")
@@ -1606,20 +2091,25 @@ elif sec=="usuarios" and rol=="admin":
 elif sec=="config" and rol=="admin":
     st.markdown("## ⚙️ Configuración")
     tab0,tab1,tab2,tab3,tab4=st.tabs(["🤖 IAs","📧 Correo","🤖 Telegram","🧪 Testers","📊 Sistema"])
+
     with tab0:
         st.markdown("### 🤖 Gestión de Inteligencias Artificiales")
+        st.info("ℹ️ El usuario solo ve 'Consultar' — esta configuración es invisible para ellos.")
         col_ia1,col_ia2=st.columns(2)
         with col_ia1:
             st.markdown("**Activar / desactivar fuentes**")
             nuevo_g=st.toggle("🔵 Gemini 2.0 Flash",value=st.session_state.get("ia_usar_g",True),key="tog_g")
-            nuevo_r=st.toggle("🟠 Groq / LLaMA 3.3",value=st.session_state.get("ia_usar_r",True),key="tog_r")
-            nuevo_m=st.toggle("🟡 Mistral AI",value=st.session_state.get("ia_usar_m",False),key="tog_m")
-            nuevo_o=st.toggle("🔷 OpenRouter",value=st.session_state.get("ia_usar_o",False),key="tog_o")
+            nuevo_r=st.toggle("🟠 Groq / LLaMA 3.3 (✅ funcionando)",value=st.session_state.get("ia_usar_r",True),key="tog_r")
+            nuevo_m=st.toggle("🟡 Mistral AI (gratis)",value=st.session_state.get("ia_usar_m",False),key="tog_m")
+            nuevo_o=st.toggle("🔷 OpenRouter / Llama gratis",value=st.session_state.get("ia_usar_o",False),key="tog_o")
             nuevo_v=st.toggle("🟣 Venice AI",value=st.session_state.get("ia_usar_v",False),key="tog_v")
             if st.button("💾 Guardar configuración IAs",type="primary"):
-                st.session_state.ia_usar_g=nuevo_g; st.session_state.ia_usar_r=nuevo_r
-                st.session_state.ia_usar_v=nuevo_v; st.session_state.ia_usar_m=nuevo_m
+                st.session_state.ia_usar_g=nuevo_g
+                st.session_state.ia_usar_r=nuevo_r
+                st.session_state.ia_usar_v=nuevo_v
+                st.session_state.ia_usar_m=nuevo_m
                 st.session_state.ia_usar_o=nuevo_o
+                # Persistir en Supabase para que sobreviva recargas
                 vals=json.dumps({"usar_g":nuevo_g,"usar_r":nuevo_r,"usar_v":nuevo_v,
                                  "usar_m":nuevo_m,"usar_o":nuevo_o,"debug":False})
                 try:
@@ -1630,49 +2120,70 @@ elif sec=="config" and rol=="admin":
                         supa("configuracion_ia","POST",{"clave":"ia_config","valor":vals})
                     st.session_state.ia_config_cargada=False
                     st.success("✅ Configuración guardada permanentemente")
-                except: st.success("✅ Configuración guardada en sesión")
+                except:
+                    st.success("✅ Configuración guardada en sesión")
         with col_ia2:
             st.markdown("**Verificar conexión**")
             if st.button("🔍 Probar Gemini 2.0"):
                 with st.spinner("Verificando..."):
                     res=gemini_fn("Responde solo: OK")
                 if res["ok"]: st.success(f"✅ Gemini OK — {res['respuesta'][:40]}")
-                else: st.error(f"❌ Gemini: {res['respuesta'][:80]}")
+                else:
+                    st.error(f"❌ Gemini: {res['respuesta'][:80]}")
+                    st.markdown("""**Para obtener nueva API key:**  
+1. Ve a [aistudio.google.com](https://aistudio.google.com) con `jandrextia@gmail.com`  
+2. Menú → Get API Key → Create API Key  
+3. Agrega en Streamlit → Settings → Secrets: `GOOGLE_API_KEY = "tu-clave"`""")
             if st.button("🔍 Probar Groq"):
                 with st.spinner("Verificando..."):
                     res=groq_fn("Responde solo: OK")
                 if res["ok"]: st.success(f"✅ Groq OK — {res['respuesta'][:40]}")
                 else: st.error(f"❌ Groq: {res['respuesta'][:80]}")
+            if st.button("🔍 Probar Venice"):
+                with st.spinner("Verificando..."):
+                    res=venice_fn("Responde solo: OK")
+                if res["ok"]: st.success(f"✅ Venice OK — {res['respuesta'][:40]}")
+                else: st.error(f"❌ Venice: {res['respuesta'][:80]}")
             if st.button("🔍 Probar Mistral"):
                 with st.spinner("Verificando..."):
                     res=mistral_fn("Responde solo: OK")
                 if res["ok"]: st.success(f"✅ Mistral OK — {res['respuesta'][:40]}")
-                else: st.error(f"❌ Mistral: {res['respuesta'][:80]}")
+                else:
+                    st.error(f"❌ Mistral: {res['respuesta'][:80]}")
+                    st.caption("Obtén clave gratis en console.mistral.ai → MISTRAL_API_KEY en Secrets")
             if st.button("🔍 Probar OpenRouter"):
                 with st.spinner("Verificando..."):
                     res=openrouter_fn("Responde solo: OK")
                 if res["ok"]: st.success(f"✅ OpenRouter OK — {res['respuesta'][:40]}")
-                else: st.error(f"❌ OpenRouter: {res['respuesta'][:80]}")
+                else:
+                    st.error(f"❌ OpenRouter: {res['respuesta'][:80]}")
+                    st.caption("Obtén clave gratis en openrouter.ai → OPENROUTER_API_KEY en Secrets")
+        st.markdown("---")
+
+
     with tab1:
         st.markdown("### 📧 Correo electrónico")
         gu=get_secret("GMAIL_USER") or "No configurado"
         st.info(f"**Cuenta activa:** {gu}")
+        st.caption("Para cambiar la cuenta actualiza GMAIL_USER y GMAIL_APP_PASSWORD en Streamlit Secrets.")
         et=st.text_input("Enviar prueba a:")
         if st.button("📧 Enviar prueba"):
             if et:
-                ok=enviar_email(et,"JandrexT — Prueba","<h2>✅ Correo funcionando correctamente.</h2>")
+                ok=enviar_email(et,"JandrexT — Prueba","<h2>✅ Correo funcionando correctamente.</h2><p>JandrexT Soluciones Integrales · Apasionados por el buen servicio</p>")
                 if ok: st.success("✅ Correo enviado")
             else: st.warning("Ingresa un correo de destino")
+
     with tab2:
         st.markdown("### 🤖 Telegram")
         tg_chat=get_secret("TELEGRAM_CHAT_ID_ADMIN") or "No configurado"
         st.info(f"**Bot:** @JandrexTAsistencia_bot | **Chat ID:** {tg_chat}")
         if st.button("📱 Enviar mensaje de prueba",type="primary"):
-            resultado=telegram(f"✅ <b>Prueba JandrexT v16</b>\nPlataforma funcionando correctamente.\n{fecha_str()}")
+            resultado=telegram(f"✅ <b>Prueba JandrexT v14</b>\nPlataforma funcionando correctamente.\n{fecha_str()}")
             ok = resultado[0] if isinstance(resultado, tuple) else resultado
             msg_err = resultado[1] if isinstance(resultado, tuple) else ""
             if ok: st.success("✅ Mensaje enviado correctamente")
             else: st.error(f"❌ Error: {msg_err}")
+
     with tab3:
         st.markdown("### 🧪 Limpieza de datos de prueba")
         st.warning("⚠️ Elimina TODOS los datos generados por usuarios testers.")
@@ -1686,7 +2197,7 @@ elif sec=="config" and rol=="admin":
             if st.button("🗑️ Limpiar todos los datos de prueba",type="primary"):
                 count=0
                 for tid in tester_ids:
-                    supa("asistencia","DELETE",filtro=f"?colaborador_id=eq.{tid}")
+                    r1=supa("asistencia","DELETE",filtro=f"?colaborador_id=eq.{tid}")
                     chats_t=supa("chats",filtro=f"?usuario_id=eq.{tid}") or []
                     for c in chats_t:
                         supa("mensajes_chat","DELETE",filtro=f"?chat_id=eq.{c['id']}")
@@ -1694,8 +2205,9 @@ elif sec=="config" and rol=="admin":
                         count+=1
                     supa("agenda","DELETE",filtro=f"?creado_por=eq.{tid}")
                     supa("manuales","DELETE",filtro=f"?creado_por=eq.{tid}")
-                st.success(f"✅ Datos eliminados: {count} chats limpiados")
+                st.success(f"✅ Datos eliminados: {count} chats y registros de asistencia limpiados")
                 st.rerun()
+
     with tab4:
         st.markdown("### 📊 Estado del sistema")
         c1,c2,c3=st.columns(3)
