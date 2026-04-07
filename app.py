@@ -1036,7 +1036,8 @@ with st.sidebar:
               ("📚","biblioteca","Biblioteca"),("📄","documentos","Documentos"),
               ("📖","manuales","Manuales"),("💼","ventas","Ventas"),
               ("🤝","aliados","Aliados"),("📊","liquidaciones","Liquidaciones"),
-              ("👑","usuarios","Especialistas y Aliados"),("⚙️","config","Configuración")]
+              ("👑","usuarios","Especialistas y Aliados"),("⚙️","config","Configuración"),
+              ("🧪","testing","Testing del Sistema")]
 
     for ico,key,label in SECS:
         es_activo = sec_actual==key
@@ -2211,6 +2212,390 @@ elif sec=="config" and rol=="admin":
         c2.metric("Tareas pendientes",total_t)
         c3.metric("Manuales",total_m)
         st.caption(f"Última actualización: {fecha_str()} | Plataforma v16.0 | JandrexT Soluciones Integrales")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MÓDULO: TESTING DEL SISTEMA
+# ══════════════════════════════════════════════════════════════════════════════
+elif sec=="testing" and rol=="admin":
+    st.markdown("## 🧪 Testing del Sistema")
+    st.info("Pruebas automáticas de todos los módulos y servicios. Solo visible para Administrador.")
+
+    # ── Resultado individual ──────────────────────────────────────────────────
+    def test_resultado(nombre, ok, detalle="", tiempo_ms=0):
+        ico = "✅" if ok else "❌"
+        color = "#0a2a0a" if ok else "#2a0a0a"
+        border = "#4ade80" if ok else "#f87171"
+        tiempo_txt = f" · {tiempo_ms}ms" if tiempo_ms else ""
+        st.markdown(f"""<div style="background:{color};border-left:4px solid {border};
+            padding:0.6rem 1rem;margin:0.25rem 0;border-radius:0 6px 6px 0;font-size:0.9rem;">
+            {ico} <strong style="color:#fff;">{nombre}</strong>
+            <span style="color:#aaa;font-size:0.8rem;"> {tiempo_txt}</span>
+            {"<br><span style='color:#ccc;font-size:0.8rem;'>"+str(detalle)[:150]+"</span>" if detalle else ""}
+            </div>""", unsafe_allow_html=True)
+        return ok
+
+    # ── Guardar resultado en Supabase ─────────────────────────────────────────
+    def guardar_resultado_test(resultados, errores):
+        try:
+            supa("testing_reportes","POST",{
+                "fecha": ahora().isoformat(),
+                "total": len(resultados),
+                "ok": sum(1 for r in resultados if r["ok"]),
+                "errores": errores,
+                "detalle": json.dumps(resultados, ensure_ascii=False)
+            })
+        except: pass
+
+    if st.button("▶ Ejecutar Testing Completo", type="primary", use_container_width=True):
+        resultados = []
+        errores_total = 0
+
+        st.markdown("---")
+        st.markdown("### 1️⃣ Conectividad y Servicios Base")
+
+        # ── TEST 1: Supabase conexión ─────────────────────────────────────────
+        t0 = ahora()
+        try:
+            r = supa("usuarios", filtro="?limit=1")
+            ok = isinstance(r, list)
+            ms = int((ahora()-t0).total_seconds()*1000)
+            test_resultado("Supabase — Conexión BD", ok,
+                "Conectado correctamente" if ok else "Error de conexión", ms)
+            resultados.append({"test":"Supabase conexión","ok":ok,"ms":ms})
+            if not ok: errores_total+=1
+        except Exception as e:
+            test_resultado("Supabase — Conexión BD", False, str(e))
+            resultados.append({"test":"Supabase conexión","ok":False,"error":str(e)})
+            errores_total+=1
+
+        # ── TEST 2: Supabase tablas ───────────────────────────────────────────
+        tablas = ["usuarios","proyectos","agenda","asistencia","chats","mensajes_chat",
+                  "clientes","documentos","manuales","ventas","liquidaciones","biblioteca"]
+        for tabla in tablas:
+            t0 = ahora()
+            try:
+                r = supa(tabla, filtro="?limit=1")
+                ok = r is not None
+                ms = int((ahora()-t0).total_seconds()*1000)
+                test_resultado(f"Supabase — Tabla '{tabla}'", ok,
+                    f"{len(r) if isinstance(r,list) else 0} registros" if ok else "Tabla no accesible", ms)
+                resultados.append({"test":f"Tabla {tabla}","ok":ok,"ms":ms})
+                if not ok: errores_total+=1
+            except Exception as e:
+                test_resultado(f"Supabase — Tabla '{tabla}'", False, str(e))
+                resultados.append({"test":f"Tabla {tabla}","ok":False,"error":str(e)})
+                errores_total+=1
+
+        # ── TEST 3: Telegram ──────────────────────────────────────────────────
+        st.markdown("### 2️⃣ Notificaciones")
+        t0 = ahora()
+        try:
+            ok_tg, msg_tg = telegram(f"🧪 Test automático JandrexT v16 · {fecha_str()}")
+            ok = ok_tg if isinstance(ok_tg, bool) else True
+            ms = int((ahora()-t0).total_seconds()*1000)
+            test_resultado("Telegram — Bot notificaciones", ok,
+                "Mensaje enviado correctamente" if ok else msg_tg, ms)
+            resultados.append({"test":"Telegram","ok":ok,"ms":ms})
+            if not ok: errores_total+=1
+        except Exception as e:
+            test_resultado("Telegram — Bot notificaciones", False, str(e))
+            resultados.append({"test":"Telegram","ok":False,"error":str(e)})
+            errores_total+=1
+
+        # ── TEST 4: Email SMTP ────────────────────────────────────────────────
+        t0 = ahora()
+        try:
+            gu = get_secret("GMAIL_USER")
+            ok = bool(gu)
+            ms = int((ahora()-t0).total_seconds()*1000)
+            test_resultado("Gmail SMTP — Configuración", ok,
+                f"Cuenta: {gu}" if ok else "GMAIL_USER no configurado", ms)
+            resultados.append({"test":"Gmail SMTP","ok":ok,"ms":ms})
+            if not ok: errores_total+=1
+        except Exception as e:
+            test_resultado("Gmail SMTP — Configuración", False, str(e))
+            resultados.append({"test":"Gmail SMTP","ok":False,"error":str(e)})
+            errores_total+=1
+
+        # ── TEST 5: IAs ───────────────────────────────────────────────────────
+        st.markdown("### 3️⃣ Inteligencias Artificiales")
+        prompt_test = "Responde solo con: OK"
+
+        # Groq
+        t0 = ahora()
+        try:
+            r = groq_fn(prompt_test)
+            ok = r.get("ok", False)
+            ms = int((ahora()-t0).total_seconds()*1000)
+            test_resultado("Groq / LLaMA 3.3", ok,
+                r.get("respuesta","")[:80] if ok else r.get("respuesta","Error"), ms)
+            resultados.append({"test":"Groq","ok":ok,"ms":ms})
+            if not ok: errores_total+=1
+        except Exception as e:
+            test_resultado("Groq / LLaMA 3.3", False, str(e))
+            resultados.append({"test":"Groq","ok":False,"error":str(e)})
+            errores_total+=1
+
+        # Gemini
+        t0 = ahora()
+        try:
+            r = gemini_fn(prompt_test)
+            ok = r.get("ok", False)
+            ms = int((ahora()-t0).total_seconds()*1000)
+            test_resultado("Gemini 2.0 Flash", ok,
+                r.get("respuesta","")[:80] if ok else r.get("respuesta","Error"), ms)
+            resultados.append({"test":"Gemini","ok":ok,"ms":ms})
+            if not ok: errores_total+=1
+        except Exception as e:
+            test_resultado("Gemini 2.0 Flash", False, str(e))
+            resultados.append({"test":"Gemini","ok":False,"error":str(e)})
+            errores_total+=1
+
+        # Mistral
+        t0 = ahora()
+        try:
+            r = mistral_fn(prompt_test)
+            ok = r.get("ok", False)
+            ms = int((ahora()-t0).total_seconds()*1000)
+            test_resultado("Mistral AI", ok,
+                r.get("respuesta","")[:80] if ok else r.get("respuesta","Error"), ms)
+            resultados.append({"test":"Mistral","ok":ok,"ms":ms})
+            if not ok: errores_total+=1
+        except Exception as e:
+            test_resultado("Mistral AI", False, str(e))
+            resultados.append({"test":"Mistral","ok":False,"error":str(e)})
+            errores_total+=1
+
+        # OpenRouter
+        t0 = ahora()
+        try:
+            r = openrouter_fn(prompt_test)
+            ok = r.get("ok", False)
+            ms = int((ahora()-t0).total_seconds()*1000)
+            test_resultado("OpenRouter (Llama free)", ok,
+                r.get("respuesta","")[:80] if ok else r.get("respuesta","Error"), ms)
+            resultados.append({"test":"OpenRouter","ok":ok,"ms":ms})
+            if not ok: errores_total+=1
+        except Exception as e:
+            test_resultado("OpenRouter", False, str(e))
+            resultados.append({"test":"OpenRouter","ok":False,"error":str(e)})
+            errores_total+=1
+
+        # Venice
+        t0 = ahora()
+        try:
+            r = venice_fn(prompt_test)
+            ok = r.get("ok", False)
+            ms = int((ahora()-t0).total_seconds()*1000)
+            test_resultado("Venice AI", ok,
+                r.get("respuesta","")[:80] if ok else r.get("respuesta","Error"), ms)
+            resultados.append({"test":"Venice","ok":ok,"ms":ms})
+            if not ok: errores_total+=1
+        except Exception as e:
+            test_resultado("Venice AI", False, str(e))
+            resultados.append({"test":"Venice","ok":False,"error":str(e)})
+            errores_total+=1
+
+        # ── TEST 6: Módulos de datos ──────────────────────────────────────────
+        st.markdown("### 4️⃣ Módulos de Datos")
+
+        modulos_data = [
+            ("Proyectos — Lectura", "proyectos", "?limit=5"),
+            ("Agenda — Lectura", "agenda", "?limit=5"),
+            ("Asistencia — Lectura", "asistencia", "?limit=5"),
+            ("Chats — Lectura", "chats", "?limit=5"),
+            ("Aliados — Lectura", "clientes", "?limit=5"),
+            ("Ventas — Lectura", "ventas", "?limit=5"),
+            ("Documentos — Lectura", "documentos", "?limit=5"),
+            ("Manuales — Lectura", "manuales", "?limit=5"),
+            ("Biblioteca — Lectura", "biblioteca", "?limit=5"),
+            ("Liquidaciones — Lectura", "liquidaciones", "?limit=5"),
+        ]
+        for nombre_mod, tabla, filtro in modulos_data:
+            t0 = ahora()
+            try:
+                r = supa(tabla, filtro=filtro)
+                ok = r is not None
+                ms = int((ahora()-t0).total_seconds()*1000)
+                cnt = len(r) if isinstance(r, list) else 0
+                test_resultado(nombre_mod, ok, f"{cnt} registros encontrados", ms)
+                resultados.append({"test":nombre_mod,"ok":ok,"registros":cnt,"ms":ms})
+                if not ok: errores_total+=1
+            except Exception as e:
+                test_resultado(nombre_mod, False, str(e))
+                resultados.append({"test":nombre_mod,"ok":False,"error":str(e)})
+                errores_total+=1
+
+        # ── TEST 7: Escritura en BD ───────────────────────────────────────────
+        st.markdown("### 5️⃣ Escritura en Base de Datos")
+        t0 = ahora()
+        try:
+            ts = ahora().isoformat()
+            r = supa("chats","POST",{
+                "titulo":f"[TEST AUTOMÁTICO] {ts}",
+                "usuario_id": u["id"]
+            })
+            ok = r and isinstance(r, list) and len(r) > 0
+            ms = int((ahora()-t0).total_seconds()*1000)
+            if ok:
+                # Limpiar el chat de prueba
+                supa("chats","DELETE",filtro=f"?id=eq.{r[0]['id']}")
+            test_resultado("Supabase — Escritura (INSERT/DELETE)", ok,
+                "Creación y eliminación de registro OK" if ok else "Error al escribir", ms)
+            resultados.append({"test":"Supabase escritura","ok":ok,"ms":ms})
+            if not ok: errores_total+=1
+        except Exception as e:
+            test_resultado("Supabase — Escritura (INSERT/DELETE)", False, str(e))
+            resultados.append({"test":"Supabase escritura","ok":False,"error":str(e)})
+            errores_total+=1
+
+        # ── TEST 8: Zona horaria ──────────────────────────────────────────────
+        st.markdown("### 6️⃣ Configuración del Sistema")
+        t0 = ahora()
+        try:
+            hora_col = ahora()
+            ok = hora_col.tzinfo is not None
+            ms = int((ahora()-t0).total_seconds()*1000)
+            test_resultado("Zona horaria Colombia", ok,
+                f"Hora actual: {fecha_str()} (America/Bogota)", ms)
+            resultados.append({"test":"Zona horaria","ok":ok,"ms":ms})
+        except Exception as e:
+            test_resultado("Zona horaria Colombia", False, str(e))
+            resultados.append({"test":"Zona horaria","ok":False,"error":str(e)})
+            errores_total+=1
+
+        # Secrets configurados
+        secrets_requeridos = [
+            ("SUPABASE_URL", "Supabase URL"),
+            ("SUPABASE_ANON_KEY", "Supabase Key"),
+            ("GROQ_API_KEY", "Groq API Key"),
+            ("TELEGRAM_BOT_TOKEN", "Telegram Token"),
+            ("TELEGRAM_CHAT_ID_ADMIN", "Telegram Chat ID"),
+            ("GMAIL_USER", "Gmail Usuario"),
+            ("GOOGLE_API_KEY", "Gemini API Key"),
+            ("MISTRAL_API_KEY", "Mistral API Key"),
+            ("OPENROUTER_API_KEY", "OpenRouter API Key"),
+        ]
+        for key_secret, label in secrets_requeridos:
+            val = get_secret(key_secret)
+            ok = bool(val)
+            test_resultado(f"Secret — {label}", ok,
+                "✓ Configurado" if ok else "⚠️ No configurado en Streamlit Secrets")
+            resultados.append({"test":f"Secret {key_secret}","ok":ok})
+            if not ok: errores_total+=1
+
+        # ── TEST 9: Generación de documentos ─────────────────────────────────
+        st.markdown("### 7️⃣ Generación de Documentos")
+        t0 = ahora()
+        try:
+            html_test = generar_pdf_html("Test Automático",
+                "Documento generado por el agente de testing automático de JandrexT.")
+            ok = bool(html_test) and len(html_test) > 100
+            ms = int((ahora()-t0).total_seconds()*1000)
+            test_resultado("Generador HTML de documentos", ok,
+                f"Documento generado: {len(html_test)} chars" if ok else "Error al generar", ms)
+            resultados.append({"test":"Generador HTML","ok":ok,"ms":ms})
+            if not ok: errores_total+=1
+        except Exception as e:
+            test_resultado("Generador HTML de documentos", False, str(e))
+            resultados.append({"test":"Generador HTML","ok":False,"error":str(e)})
+            errores_total+=1
+
+        # ── TEST 10: Síntesis IA ──────────────────────────────────────────────
+        st.markdown("### 8️⃣ Síntesis de Respuestas IA")
+        t0 = ahora()
+        try:
+            resp_test = [{"ia":"Groq","icono":"🟠","respuesta":"OK","tiempo":0.1,"ok":True}]
+            sintesis = juez_fn("Test de síntesis automática", resp_test)
+            ok = bool(sintesis) and len(sintesis) > 5
+            ms = int((ahora()-t0).total_seconds()*1000)
+            test_resultado("Síntesis / Juez IA", ok,
+                sintesis[:80] if ok else "Error en síntesis", ms)
+            resultados.append({"test":"Síntesis IA","ok":ok,"ms":ms})
+            if not ok: errores_total+=1
+        except Exception as e:
+            test_resultado("Síntesis / Juez IA", False, str(e))
+            resultados.append({"test":"Síntesis IA","ok":False,"error":str(e)})
+            errores_total+=1
+
+        # ── RESUMEN FINAL ─────────────────────────────────────────────────────
+        st.markdown("---")
+        total_tests = len(resultados)
+        ok_count = sum(1 for r in resultados if r.get("ok"))
+        fail_count = errores_total
+
+        color_res = "#0a2a0a" if fail_count == 0 else "#2a1a0a" if fail_count < 3 else "#2a0a0a"
+        icono_res = "🟢" if fail_count == 0 else "🟡" if fail_count < 3 else "🔴"
+
+        st.markdown(f"""<div style="background:{color_res};border:2px solid #cc0000;
+            border-radius:10px;padding:1.5rem;text-align:center;margin-top:1rem;">
+            <div style="font-size:3rem;">{icono_res}</div>
+            <div style="color:#fff;font-size:1.4rem;font-weight:700;">
+                {ok_count}/{total_tests} pruebas exitosas
+            </div>
+            <div style="color:#aaa;font-size:0.9rem;margin-top:0.5rem;">
+                {"✅ Sistema en perfecto estado" if fail_count==0
+                 else f"⚠️ {fail_count} pruebas fallaron — revisar configuración"}
+            </div>
+            <div style="color:#666;font-size:0.8rem;margin-top:0.3rem;">
+                {fecha_str()} · Plataforma v16.0 · JandrexT Soluciones Integrales
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+        # Guardar reporte
+        guardar_resultado_test(resultados, fail_count)
+
+        # Enviar resumen por Telegram
+        errores_lista = [r for r in resultados if not r.get("ok")]
+        msg_tg = f"""🧪 <b>Reporte Testing JandrexT v16</b>
+{fecha_str()}
+
+✅ OK: {ok_count}/{total_tests}
+❌ Fallidos: {fail_count}
+
+{"🔴 Errores:" + chr(10) + chr(10).join(f"• {r['test']}: {str(r.get('error',r.get('respuesta','fail')))[:60]}" for r in errores_lista) if errores_lista else "🟢 Todos los servicios funcionando correctamente"}"""
+        telegram(msg_tg)
+        st.success("✅ Reporte enviado por Telegram")
+
+    # ── Historial de reportes ─────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📋 Historial de Testing")
+    try:
+        hist = supa("testing_reportes", filtro="?order=fecha.desc&limit=10") or []
+        if not hist:
+            st.info("No hay reportes anteriores. Cree la tabla 'testing_reportes' en Supabase para guardar historial.")
+            st.code("""CREATE TABLE testing_reportes (
+  id SERIAL PRIMARY KEY,
+  fecha TIMESTAMPTZ DEFAULT NOW(),
+  total INTEGER,
+  ok INTEGER,
+  errores INTEGER,
+  detalle TEXT
+);""", language="sql")
+        else:
+            for h in hist:
+                if not isinstance(h, dict): continue
+                ok_h = h.get("ok", 0)
+                total_h = h.get("total", 0)
+                err_h = h.get("errores", 0)
+                ico = "🟢" if err_h == 0 else "🟡" if err_h < 3 else "🔴"
+                st.markdown(f"""<div style="background:#0a0f00;border:1px solid #cc0000;
+                    border-radius:6px;padding:0.6rem 1rem;margin:0.3rem 0;display:flex;
+                    justify-content:space-between;">
+                    <span style="color:#fff;">{ico} {str(h.get('fecha',''))[:16]}</span>
+                    <span style="color:#4ade80;">{ok_h}/{total_h} OK</span>
+                    <span style="color:#f87171;">{"Sin errores" if err_h==0 else f"{err_h} errores"}</span>
+                </div>""", unsafe_allow_html=True)
+    except:
+        st.info("Cree la tabla 'testing_reportes' en Supabase para ver el historial.")
+        st.code("""CREATE TABLE testing_reportes (
+  id SERIAL PRIMARY KEY,
+  fecha TIMESTAMPTZ DEFAULT NOW(),
+  total INTEGER,
+  ok INTEGER,
+  errores INTEGER,
+  detalle TEXT
+);""", language="sql")
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown(f"""<div class="footer-inst">
