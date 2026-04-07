@@ -857,7 +857,7 @@ html,body,[class*="css"]{{font-family:'Inter','Helvetica Neue',Arial,sans-serif;
     font-size:1rem;letter-spacing:5px;text-transform:uppercase;margin:0.5rem 0 0;display:block;}}
 .si-grande{{font-size:1.4rem;vertical-align:baseline;line-height:1;}}
 .logo-login-lema{{font-family:'JennaSue','jenna-sue__allfont_net_','Georgia',serif;
-    color:#cc0000;font-size:2rem;margin:0.2rem 0 0;font-style:italic;line-height:1.3;display:block;}}
+    color:#cc0000;font-size:2.5rem;margin:0.4rem 0 0;font-style:italic;line-height:1.3;display:block;text-shadow:0 1px 4px rgba(0,0,0,0.4);}}
 
 /* HEADER */
 .header-inst{{background:#fff;border-radius:12px;
@@ -869,7 +869,7 @@ html,body,[class*="css"]{{font-family:'Inter','Helvetica Neue',Arial,sans-serif;
 .h-name{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;font-size:2.2rem;
     font-weight:900;letter-spacing:6px;margin:0;line-height:1.2;}}
 .h-acc{{color:#0a0000;}}
-.h-lema{{font-family:'JennaSue','Georgia',serif;color:#cc0000;font-size:1.1rem;margin:0.2rem 0;font-style:italic;}}
+.h-lema{{font-family:'JennaSue','jenna-sue__allfont_net_','Georgia',serif;color:#cc0000;font-size:1.8rem;margin:0;font-style:italic;line-height:1.2;}}
 .h-sub{{font-family:'Pax_Oceania_Regular','Georgia',serif;color:#666;font-size:0.75rem;
     letter-spacing:4px;text-transform:uppercase;margin:0.1rem 0;}}
 .h-user{{text-align:right;flex-shrink:0;}}
@@ -886,7 +886,7 @@ html,body,[class*="css"]{{font-family:'Inter','Helvetica Neue',Arial,sans-serif;
 .sb-acc{{color:#0a0000;}}
 .sb-sub{{font-family:'Pax_Oceania_Regular','Georgia',serif;color:#333;font-size:0.7rem;
     margin:0.1rem 0;letter-spacing:3px;text-transform:uppercase;}}
-.sb-lema{{font-family:'JennaSue',sans-serif;color:#cc0000;font-size:0.95rem;margin:0.2rem 0 0;}}
+.sb-lema{{font-family:'JennaSue','jenna-sue__allfont_net_',sans-serif;color:#cc0000;font-size:1.1rem;margin:0.2rem 0 0;font-style:italic;}}
 .ub{{background:#1a0000;border:1px solid #cc0000;border-radius:8px;
     padding:0.5rem 0.8rem;margin-bottom:0.5rem;text-align:center;}}
 .ub-n{{color:#ffcccc;font-size:0.9rem;font-weight:700;margin:0;}}
@@ -1098,12 +1098,12 @@ with st.sidebar:
             st.warning("¿Confirmas? Presiona de nuevo.")
 
 # ── Header ────────────────────────────────────────────────────────────────────
-logo_tag=f'<img src="data:image/png;base64,{logo_b64}" style="height:75px;width:auto;flex-shrink:0;"/>' if logo_b64 else ""
+logo_tag=f'<img src="data:image/png;base64,{logo_b64}" style="height:80px;width:auto;flex-shrink:0;border-radius:6px;"/>' if logo_b64 else ""
 st.markdown(f"""<div class="header-inst">
     {logo_tag}
     <div class="h-brand">
-        <p class="h-sub" style="margin-bottom:2px;">Plataforma v16.0</p>
-        <p class="h-lema">Apasionados por el buen servicio</p>
+        <div class="h-lema">Apasionados por el buen servicio</div>
+        <div class="h-sub">Soluciones Integrales &nbsp;·&nbsp; Plataforma v16.0</div>
     </div>
     <div class="h-user">
         <div class="h-saludo">{saludo},</div>
