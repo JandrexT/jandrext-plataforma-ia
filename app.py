@@ -157,12 +157,10 @@ CHECKLISTS = {
         "Revisar señalización","Verificar batería","Revisar teclado","Documentar con fotos"],
 }
 
-CONTEXTO = """Eres asistente experto de JandrexT Soluciones Integrales — empresa colombiana apasionados por el buen servicio.
-Servicios: automatización de accesos, videovigilancia CCTV, control de acceso y biometría,
-redes y comunicaciones, sistemas eléctricos, cerca eléctrica, soporte tecnológico, desarrollo de software.
-Director: Andrés Tapiero | Lema: Apasionados por el buen servicio | NIT: 80818905-3
-Tel: 317 391 0621 | proyectos@jandrext.com | Bogotá, Colombia
-Comportamiento: empático, profesional, práctico. Normas colombianas cuando aplique."""
+CONTEXTO = """Eres el asistente técnico experto de JandrexT Soluciones Integrales — empresa colombiana especializada en seguridad electrónica y automatización. Lema: Apasionados por el buen servicio.
+Servicios: automatización de accesos, videovigilancia CCTV, control de acceso y biometría, redes y comunicaciones, sistemas eléctricos, cerca eléctrica, soporte tecnológico, desarrollo de software.
+Director: Andrés Tapiero | NIT: 80818905-3 | Tel: 317 391 0621 | proyectos@jandrext.com | Bogotá, Colombia. Cobertura: Bogotá y municipios cercanos (Soacha, Chía, Cajicá, Mosquera, Funza, Madrid, Facatativá).
+Comportamiento: empático, profesional, práctico. Aplica normas colombianas. Al final de cada respuesta menciona brevemente que JandrexT Soluciones Integrales cuenta con especialistas disponibles para este tipo de instalaciones o servicios."""
 
 # ── IAs ───────────────────────────────────────────────────────────────────────
 def gemini_fn(p, modelo="gemini-2.0-flash"):
@@ -869,9 +867,9 @@ html,body,[class*="css"]{{font-family:'Inter','Helvetica Neue',Arial,sans-serif;
 .h-name{{font-family:'Disclaimer-Classic','Inter',sans-serif;color:#cc0000;font-size:2.2rem;
     font-weight:900;letter-spacing:6px;margin:0;line-height:1.2;}}
 .h-acc{{color:#0a0000;}}
-.h-lema{{font-family:'JennaSue','jenna-sue__allfont_net_','Georgia',serif;color:#cc0000;font-size:1.8rem;margin:0;font-style:italic;line-height:1.2;}}
-.h-sub{{font-family:'Pax_Oceania_Regular','Georgia',serif;color:#666;font-size:0.75rem;
-    letter-spacing:4px;text-transform:uppercase;margin:0.1rem 0;}}
+.h-lema{{font-family:'JennaSue','jenna-sue__allfont_net_','Georgia',serif !important;color:#cc0000;font-size:1.6rem;margin:0.1rem 0;font-style:italic;line-height:1.3;}}
+.h-sub{{font-family:'Pax_Oceania_Regular','Georgia',serif;color:#888;font-size:0.7rem;
+    letter-spacing:3px;text-transform:uppercase;margin:0;}}
 .h-user{{text-align:right;flex-shrink:0;}}
 .h-saludo{{font-family:'JennaSue','Georgia',serif;color:#cc0000;font-size:1.2rem;font-style:italic;}}
 .h-nombre{{color:#0a0000;font-weight:700;font-size:1.1rem;}}
@@ -1017,7 +1015,7 @@ rol_label=ROL_LABEL.get(rol,rol)
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    logo_sb = f'<img src="data:image/png;base64,{logo_b64}" style="height:60px;width:auto;margin-bottom:4px;"/><br/>' if logo_b64 else ""
+    logo_sb = f'<img src="data:image/png;base64,{logo_b64}" style="height:65px;width:auto;margin-bottom:6px;display:block;margin-left:auto;margin-right:auto;"/>' if logo_b64 else ""
     st.markdown(f"""<div class="sb-wrap">
         {logo_sb}
         <p class="sb-lema">Apasionados por el buen servicio</p>
@@ -1058,30 +1056,19 @@ with st.sidebar:
     # Los toggles se gestionan desde Configuración (solo admin)
     # Cargar configuración de IAs desde Supabase (persistente)
     if "ia_config_cargada" not in st.session_state:
+        _defaults = {"usar_g":True,"usar_r":True,"usar_v":False,"usar_m":True,"usar_o":True,"debug":False}
         try:
             cfg=supa("configuracion_ia",filtro="?clave=eq.ia_config")
-            if cfg and isinstance(cfg,list) and cfg:
+            if cfg and isinstance(cfg,list) and cfg and isinstance(cfg[0],dict):
                 vals=json.loads(cfg[0].get("valor","{}"))
-                st.session_state.ia_usar_g=vals.get("usar_g",True)
-                st.session_state.ia_usar_r=vals.get("usar_r",True)
-                st.session_state.ia_usar_v=vals.get("usar_v",False)
-                st.session_state.ia_usar_m=vals.get("usar_m",True)
-                st.session_state.ia_usar_o=vals.get("usar_o",True)
-                st.session_state.ia_debug_mode=vals.get("debug",False)
-            else:
-                st.session_state.ia_usar_g=True
-                st.session_state.ia_usar_r=True
-                st.session_state.ia_usar_v=False
-                st.session_state.ia_usar_m=True
-                st.session_state.ia_usar_o=True
-                st.session_state.ia_debug_mode=False
-        except:
-            st.session_state.ia_usar_g=True
-            st.session_state.ia_usar_r=True
-            st.session_state.ia_usar_v=False
-            st.session_state.ia_usar_m=True
-            st.session_state.ia_usar_o=True
-            st.session_state.ia_debug_mode=False
+                _defaults.update(vals)
+        except: pass
+        st.session_state.ia_usar_g=_defaults["usar_g"]
+        st.session_state.ia_usar_r=_defaults["usar_r"]
+        st.session_state.ia_usar_v=_defaults["usar_v"]
+        st.session_state.ia_usar_m=_defaults["usar_m"]
+        st.session_state.ia_usar_o=_defaults["usar_o"]
+        st.session_state.ia_debug_mode=_defaults["debug"]
         st.session_state.ia_config_cargada=True
     usar_g=st.session_state.ia_usar_g
     usar_r=st.session_state.ia_usar_r
@@ -1103,7 +1090,7 @@ st.markdown(f"""<div class="header-inst">
     {logo_tag}
     <div class="h-brand">
         <div class="h-lema">Apasionados por el buen servicio</div>
-        <div class="h-sub">Soluciones Integrales &nbsp;·&nbsp; Plataforma v16.0</div>
+        <div class="h-sub">SOLUCIONES INTEGRALES &nbsp;·&nbsp; PLATAFORMA V16.0</div>
     </div>
     <div class="h-user">
         <div class="h-saludo">{saludo},</div>
