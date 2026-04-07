@@ -188,7 +188,10 @@ def groq_fn(p):
 
 def venice_fn(p):
     try:
-        t=time.time(); h={"Authorization":f"Bearer {os.getenv('VENICE_API_KEY','')}","Content-Type":"application/json"}
+        api_key=get_secret("VENICE_API_KEY")
+        if not api_key:
+            return {"ia":"Venice","icono":"⚪","respuesta":"No configurado (opcional)","tiempo":0,"ok":False}
+        t=time.time(); h={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"}
         r=req.post("https://api.venice.ai/api/v1/chat/completions",
             json={"model":"llama-3.3-70b","messages":[{"role":"system","content":CONTEXTO},{"role":"user","content":p}],"max_tokens":1500},
             headers=h,timeout=30)
@@ -219,7 +222,7 @@ def openrouter_fn(p):
         h={"Authorization":f"Bearer {api_key}","Content-Type":"application/json",
            "HTTP-Referer":"https://jandrext-ia.streamlit.app","X-Title":"JandrexT IA"}
         r=req.post("https://openrouter.ai/api/v1/chat/completions",
-            json={"model":"mistralai/mistral-7b-instruct:free","messages":[{"role":"system","content":CONTEXTO},{"role":"user","content":p}],"max_tokens":1500},
+            json={"model":"mistralai/mistral-7b-instruct:free","messages":[{"role":"system","content":CONTEXTO},{"role":"user","content":p}],"max_tokens":1500,"transforms":["middle-out"]},
             headers=h,timeout=30)
         if r.status_code==200:
             return {"ia":"OpenRouter","icono":"🔷","respuesta":r.json()["choices"][0]["message"]["content"].strip(),"tiempo":round(time.time()-t,2),"ok":True}
@@ -369,7 +372,7 @@ Para el campo direccion: busca la dirección completa incluyendo calle, carrera,
             h = {"Authorization":f"Bearer {api_key}","Content-Type":"application/json",
                  "HTTP-Referer":"https://jandrext-ia.streamlit.app","X-Title":"JandrexT IA"}
             mime = "application/pdf" if tipo=="pdf" else "image/jpeg"
-            payload = {"model":"qwen/qwen2.5-vl-72b-instruct:free",
+            payload = {"model":"mistralai/mistral-7b-instruct:free",
                        "messages":[{"role":"user","content":[
                            {"type":"text","text":prompt_json},
                            {"type":"image_url","image_url":{"url":f"data:{mime};base64,{b64}"}}
@@ -1195,7 +1198,16 @@ if sec=="inicio":
                 </div>''',unsafe_allow_html=True)
     with col_b:
         st.markdown("### 📅 Agenda de hoy")
-        agenda_hoy=supa("agenda",filtro=f"?fecha=eq.{hoy}&order=hora.asc") or []
+        # Intentar con campo "fecha" y también "fecha_tarea"
+        agenda_hoy = supa("agenda",filtro=f"?fecha=eq.{hoy}&order=hora.asc") or []
+        if not agenda_hoy:
+            agenda_hoy = supa("agenda",filtro=f"?fecha_tarea=eq.{hoy}") or []
+        if not agenda_hoy:
+            # Traer todos de hoy buscando por fecha en cualquier campo
+            todos_ag = supa("agenda",filtro="?order=creado_en.desc&limit=20") or []
+            agenda_hoy = [ev for ev in todos_ag if isinstance(ev,dict) and
+                         hoy in str(ev.get("fecha","")) + str(ev.get("fecha_tarea","")) +
+                         str(ev.get("created_at","")) + str(ev.get("creado_en",""))]
         if not isinstance(agenda_hoy, list): agenda_hoy=[]
         if not agenda_hoy:
             st.markdown('<div class="tip">Sin eventos para hoy.</div>',unsafe_allow_html=True)
@@ -2247,12 +2259,21 @@ elif sec=="testing" and rol=="admin":
     def t_run(nombre, fn):
         t0=ahora()
         try:
-            resultado, detalle = fn()
+            salida = fn()
             ms=int((ahora()-t0).total_seconds()*1000)
+            # Manejar distintos tipos de retorno
+            if isinstance(salida, tuple) and len(salida)==2:
+                resultado, detalle = salida
+                # Si resultado es string no vacío = éxito
+                if isinstance(resultado, str): resultado = bool(resultado)
+            elif isinstance(salida, bool):
+                resultado, detalle = salida, ""
+            else:
+                resultado, detalle = bool(salida), str(salida)[:80]
             return t_ok(nombre,detalle,ms) if resultado else t_err(nombre,detalle,ms)
         except Exception as e:
             ms=int((ahora()-t0).total_seconds()*1000)
-            return t_err(nombre,str(e),ms)
+            return t_err(nombre,str(e)[:120],ms)
 
     # ── Limpiar datos de prueba anteriores ────────────────────────────────────
     def limpiar_pruebas_anteriores():
@@ -2365,9 +2386,13 @@ elif sec=="testing" and rol=="admin":
 
         def crear_chat():
             r=supa("chats","POST",{"titulo":f"{PREFIJO} Chat Prueba {TS}","usuario_id":u["id"]})
-            if r and isinstance(r,list) and r[0].get("id"):
+            if r and isinstance(r,list) and len(r)>0 and isinstance(r[0],dict) and r[0].get("id"):
                 return True, f"Chat creado ID: {r[0]['id']}"
-            return False, "No se pudo crear el chat"
+            # Verificar si igual se creó
+            check=supa("chats",filtro=f"?titulo=like.{PREFIJO}*&usuario_id=eq.{u['id']}&limit=1")
+            if check and isinstance(check,list) and len(check)>0:
+                return True, f"Chat verificado en BD"
+            return False, f"No se pudo crear: {str(r)[:60]}"
         res=t_run("Chat — Crear nuevo chat", crear_chat)
         resultados.append(res)
 
@@ -2685,8 +2710,10 @@ CREATE TABLE testing_reportes (
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown(f"""<div class="footer-inst">
-    <span class="footer-acc">JandrexT</span> Soluciones Integrales &nbsp;·&nbsp;
-    Director de Proyectos: <span class="footer-acc">Andrés Tapiero</span> &nbsp;·&nbsp;
-    Plataforma v16.0 &nbsp;·&nbsp; 🔒 Sistema Interno<br>
-    <span class="footer-lema-j">Apasionados por el buen servicio</span>
+    <span class="footer-acc" style="font-family:'Disclaimer-Classic',sans-serif;">JandrexT</span>
+    <span style="color:#555;"> Soluciones Integrales &nbsp;·&nbsp;
+    Director de Proyectos: </span><span style="color:#cc0000;font-weight:700;">Andrés Tapiero</span>
+    <span style="color:#555;"> &nbsp;·&nbsp; Plataforma v16.0 &nbsp;·&nbsp; 🔒 Sistema Interno</span><br>
+    <span class="footer-lema-j" style="font-family:'JennaSue','jenna-sue__allfont_net_',Georgia,serif;color:#cc0000;font-size:1rem;">
+        Apasionados por el buen servicio</span>
 </div>""", unsafe_allow_html=True)
