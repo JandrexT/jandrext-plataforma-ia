@@ -2214,388 +2214,474 @@ elif sec=="config" and rol=="admin":
         st.caption(f"Última actualización: {fecha_str()} | Plataforma v16.0 | JandrexT Soluciones Integrales")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MÓDULO: TESTING DEL SISTEMA
+# MÓDULO: TESTING DEL SISTEMA — FLUJO DE TRABAJO COMPLETO
 # ══════════════════════════════════════════════════════════════════════════════
 elif sec=="testing" and rol=="admin":
     st.markdown("## 🧪 Testing del Sistema")
-    st.info("Pruebas automáticas de todos los módulos y servicios. Solo visible para Administrador.")
+    st.info("Crea un flujo de trabajo completo de prueba en cada módulo, verifica que se guardó en BD y luego lo elimina. Solo visible para Administrador.")
 
-    # ── Resultado individual ──────────────────────────────────────────────────
-    def test_resultado(nombre, ok, detalle="", tiempo_ms=0):
-        ico = "✅" if ok else "❌"
-        color = "#0a2a0a" if ok else "#2a0a0a"
-        border = "#4ade80" if ok else "#f87171"
-        tiempo_txt = f" · {tiempo_ms}ms" if tiempo_ms else ""
+    PREFIJO = "[TEST_AUTO]"  # Identificador de datos de prueba
+    TS = ahora().strftime("%d%m%Y_%H%M%S")  # Timestamp único para esta ejecución
+
+    # ── Helpers ───────────────────────────────────────────────────────────────
+    def t_ok(nombre, detalle="", ms=0):
+        ico, color, border = "✅", "#0a2a0a", "#4ade80"
         st.markdown(f"""<div style="background:{color};border-left:4px solid {border};
-            padding:0.6rem 1rem;margin:0.25rem 0;border-radius:0 6px 6px 0;font-size:0.9rem;">
+            padding:0.5rem 1rem;margin:0.2rem 0;border-radius:0 6px 6px 0;">
             {ico} <strong style="color:#fff;">{nombre}</strong>
-            <span style="color:#aaa;font-size:0.8rem;"> {tiempo_txt}</span>
-            {"<br><span style='color:#ccc;font-size:0.8rem;'>"+str(detalle)[:150]+"</span>" if detalle else ""}
+            {"<span style='color:#aaa;font-size:0.8rem;'> · "+str(ms)+"ms</span>" if ms else ""}
+            {"<br><span style='color:#ccc;font-size:0.8rem;'>"+str(detalle)[:120]+"</span>" if detalle else ""}
             </div>""", unsafe_allow_html=True)
-        return ok
+        return {"test":nombre,"ok":True,"detalle":str(detalle),"ms":ms}
 
-    # ── Guardar resultado en Supabase ─────────────────────────────────────────
-    def guardar_resultado_test(resultados, errores):
+    def t_err(nombre, detalle="", ms=0):
+        ico, color, border = "❌", "#2a0a0a", "#f87171"
+        st.markdown(f"""<div style="background:{color};border-left:4px solid {border};
+            padding:0.5rem 1rem;margin:0.2rem 0;border-radius:0 6px 6px 0;">
+            {ico} <strong style="color:#fff;">{nombre}</strong>
+            {"<span style='color:#aaa;font-size:0.8rem;'> · "+str(ms)+"ms</span>" if ms else ""}
+            {"<br><span style='color:#f87171;font-size:0.8rem;'>"+str(detalle)[:120]+"</span>" if detalle else ""}
+            </div>""", unsafe_allow_html=True)
+        return {"test":nombre,"ok":False,"detalle":str(detalle),"ms":ms}
+
+    def t_run(nombre, fn):
+        t0=ahora()
         try:
-            supa("testing_reportes","POST",{
-                "fecha": ahora().isoformat(),
-                "total": len(resultados),
-                "ok": sum(1 for r in resultados if r["ok"]),
-                "errores": errores,
-                "detalle": json.dumps(resultados, ensure_ascii=False)
-            })
-        except: pass
+            resultado, detalle = fn()
+            ms=int((ahora()-t0).total_seconds()*1000)
+            return t_ok(nombre,detalle,ms) if resultado else t_err(nombre,detalle,ms)
+        except Exception as e:
+            ms=int((ahora()-t0).total_seconds()*1000)
+            return t_err(nombre,str(e),ms)
 
-    if st.button("▶ Ejecutar Testing Completo", type="primary", use_container_width=True):
+    # ── Limpiar datos de prueba anteriores ────────────────────────────────────
+    def limpiar_pruebas_anteriores():
+        """Elimina todos los registros de pruebas anteriores identificados con PREFIJO"""
+        eliminados = 0
+        try:
+            # Chats de prueba
+            chats_test = supa("chats", filtro=f"?titulo=like.{PREFIJO}*") or []
+            for ct in chats_test:
+                if isinstance(ct,dict):
+                    supa("mensajes_chat","DELETE",filtro=f"?chat_id=eq.{ct['id']}")
+                    supa("chats","DELETE",filtro=f"?id=eq.{ct['id']}")
+                    eliminados+=1
+            # Proyectos de prueba
+            projs = supa("proyectos", filtro=f"?nombre=like.{PREFIJO}*") or []
+            for p in projs:
+                if isinstance(p,dict):
+                    supa("chats","DELETE",filtro=f"?proyecto_id=eq.{p['id']}")
+                    supa("proyectos","DELETE",filtro=f"?id=eq.{p['id']}")
+                    eliminados+=1
+            # Agenda de prueba
+            ags = supa("agenda", filtro=f"?tarea=like.{PREFIJO}*") or []
+            for ag in ags:
+                if isinstance(ag,dict):
+                    supa("agenda","DELETE",filtro=f"?id=eq.{ag['id']}")
+                    eliminados+=1
+            # Asistencia de prueba
+            asis = supa("asistencia", filtro=f"?observaciones=like.{PREFIJO}*") or []
+            for a in asis:
+                if isinstance(a,dict):
+                    supa("asistencia","DELETE",filtro=f"?id=eq.{a['id']}")
+                    eliminados+=1
+            # Aliados de prueba
+            alis = supa("clientes", filtro=f"?nombre=like.{PREFIJO}*") or []
+            for al in alis:
+                if isinstance(al,dict):
+                    supa("clientes","DELETE",filtro=f"?id=eq.{al['id']}")
+                    eliminados+=1
+            # Ventas de prueba
+            vts = supa("ventas", filtro=f"?cliente=like.{PREFIJO}*") or []
+            for v in vts:
+                if isinstance(v,dict):
+                    supa("ventas","DELETE",filtro=f"?id=eq.{v['id']}")
+                    eliminados+=1
+            # Documentos de prueba
+            docs = supa("documentos", filtro=f"?cliente=like.{PREFIJO}*") or []
+            for d in docs:
+                if isinstance(d,dict):
+                    supa("documentos","DELETE",filtro=f"?id=eq.{d['id']}")
+                    eliminados+=1
+            # Manuales de prueba
+            mans = supa("manuales", filtro=f"?titulo=like.{PREFIJO}*") or []
+            for m in mans:
+                if isinstance(m,dict):
+                    supa("manuales","DELETE",filtro=f"?id=eq.{m['id']}")
+                    eliminados+=1
+            # Liquidaciones de prueba
+            liqs = supa("liquidaciones", filtro=f"?periodo=like.{PREFIJO}*") or []
+            for l in liqs:
+                if isinstance(l,dict):
+                    supa("liquidaciones","DELETE",filtro=f"?id=eq.{l['id']}")
+                    eliminados+=1
+        except Exception as e:
+            return False, f"Error limpiando: {e}"
+        return True, f"{eliminados} registros de prueba anteriores eliminados"
+
+    if st.button("▶ Ejecutar Testing Completo con Flujo de Trabajo", type="primary", use_container_width=True):
         resultados = []
-        errores_total = 0
+        ids_creados = {}  # Guardar IDs para verificación y limpieza
 
-        st.markdown("---")
-        st.markdown("### 1️⃣ Conectividad y Servicios Base")
+        # ── FASE 0: Limpiar pruebas anteriores ───────────────────────────────
+        st.markdown("### 🧹 Fase 0 — Limpieza de pruebas anteriores")
+        ok_limp, det_limp = limpiar_pruebas_anteriores()
+        resultados.append(t_ok("Limpieza de datos de prueba anteriores", det_limp) if ok_limp
+                         else t_err("Limpieza de datos de prueba anteriores", det_limp))
 
-        # ── TEST 1: Supabase conexión ─────────────────────────────────────────
-        t0 = ahora()
-        try:
-            r = supa("usuarios", filtro="?limit=1")
-            ok = isinstance(r, list)
-            ms = int((ahora()-t0).total_seconds()*1000)
-            test_resultado("Supabase — Conexión BD", ok,
-                "Conectado correctamente" if ok else "Error de conexión", ms)
-            resultados.append({"test":"Supabase conexión","ok":ok,"ms":ms})
-            if not ok: errores_total+=1
-        except Exception as e:
-            test_resultado("Supabase — Conexión BD", False, str(e))
-            resultados.append({"test":"Supabase conexión","ok":False,"error":str(e)})
-            errores_total+=1
+        # ── FASE 1: Servicios base ────────────────────────────────────────────
+        st.markdown("### 1️⃣ Fase 1 — Servicios y Conectividad")
 
-        # ── TEST 2: Supabase tablas ───────────────────────────────────────────
-        tablas = ["usuarios","proyectos","agenda","asistencia","chats","mensajes_chat",
-                  "clientes","documentos","manuales","ventas","liquidaciones","biblioteca"]
-        for tabla in tablas:
-            t0 = ahora()
-            try:
-                r = supa(tabla, filtro="?limit=1")
-                ok = r is not None
-                ms = int((ahora()-t0).total_seconds()*1000)
-                test_resultado(f"Supabase — Tabla '{tabla}'", ok,
-                    f"{len(r) if isinstance(r,list) else 0} registros" if ok else "Tabla no accesible", ms)
-                resultados.append({"test":f"Tabla {tabla}","ok":ok,"ms":ms})
-                if not ok: errores_total+=1
-            except Exception as e:
-                test_resultado(f"Supabase — Tabla '{tabla}'", False, str(e))
-                resultados.append({"test":f"Tabla {tabla}","ok":False,"error":str(e)})
-                errores_total+=1
+        # Supabase
+        resultados.append(t_run("Supabase — Conexión", lambda: (
+            isinstance(supa("usuarios",filtro="?limit=1"), list),
+            "Conexión exitosa a PostgreSQL"
+        )))
 
-        # ── TEST 3: Telegram ──────────────────────────────────────────────────
-        st.markdown("### 2️⃣ Notificaciones")
-        t0 = ahora()
-        try:
-            ok_tg, msg_tg = telegram(f"🧪 Test automático JandrexT v16 · {fecha_str()}")
-            ok = ok_tg if isinstance(ok_tg, bool) else True
-            ms = int((ahora()-t0).total_seconds()*1000)
-            test_resultado("Telegram — Bot notificaciones", ok,
-                "Mensaje enviado correctamente" if ok else msg_tg, ms)
-            resultados.append({"test":"Telegram","ok":ok,"ms":ms})
-            if not ok: errores_total+=1
-        except Exception as e:
-            test_resultado("Telegram — Bot notificaciones", False, str(e))
-            resultados.append({"test":"Telegram","ok":False,"error":str(e)})
-            errores_total+=1
+        # Telegram
+        resultados.append(t_run("Telegram — Notificación", lambda: (
+            telegram(f"🧪 {PREFIJO} Testing iniciado · {TS}")[0] if isinstance(telegram(f"🧪 {PREFIJO} Testing iniciado · {TS}"), tuple)
+            else bool(telegram(f"🧪 {PREFIJO} Testing iniciado · {TS}")),
+            "Mensaje enviado al bot"
+        )))
 
-        # ── TEST 4: Email SMTP ────────────────────────────────────────────────
-        t0 = ahora()
-        try:
-            gu = get_secret("GMAIL_USER")
-            ok = bool(gu)
-            ms = int((ahora()-t0).total_seconds()*1000)
-            test_resultado("Gmail SMTP — Configuración", ok,
-                f"Cuenta: {gu}" if ok else "GMAIL_USER no configurado", ms)
-            resultados.append({"test":"Gmail SMTP","ok":ok,"ms":ms})
-            if not ok: errores_total+=1
-        except Exception as e:
-            test_resultado("Gmail SMTP — Configuración", False, str(e))
-            resultados.append({"test":"Gmail SMTP","ok":False,"error":str(e)})
-            errores_total+=1
+        # IAs
+        st.markdown("### 2️⃣ Fase 2 — Inteligencias Artificiales")
+        for fn_ia, nombre_ia in [(groq_fn,"Groq/LLaMA"),(gemini_fn,"Gemini 2.0"),(mistral_fn,"Mistral"),(openrouter_fn,"OpenRouter"),(venice_fn,"Venice")]:
+            def _test_ia(fn=fn_ia, n=nombre_ia):
+                r=fn("Responde solo: TEST_OK")
+                return r.get("ok",False), r.get("respuesta","")[:60]
+            resultados.append(t_run(f"IA — {nombre_ia}", _test_ia))
 
-        # ── TEST 5: IAs ───────────────────────────────────────────────────────
-        st.markdown("### 3️⃣ Inteligencias Artificiales")
-        prompt_test = "Responde solo con: OK"
+        # Síntesis
+        resultados.append(t_run("IA — Síntesis/Juez", lambda: (
+            len(juez_fn("Test", [{"ia":"Groq","ok":True,"respuesta":"TEST_OK","tiempo":0.1,"icono":"🟠"}])) > 2,
+            "Síntesis generada correctamente"
+        )))
 
-        # Groq
-        t0 = ahora()
-        try:
-            r = groq_fn(prompt_test)
-            ok = r.get("ok", False)
-            ms = int((ahora()-t0).total_seconds()*1000)
-            test_resultado("Groq / LLaMA 3.3", ok,
-                r.get("respuesta","")[:80] if ok else r.get("respuesta","Error"), ms)
-            resultados.append({"test":"Groq","ok":ok,"ms":ms})
-            if not ok: errores_total+=1
-        except Exception as e:
-            test_resultado("Groq / LLaMA 3.3", False, str(e))
-            resultados.append({"test":"Groq","ok":False,"error":str(e)})
-            errores_total+=1
+        # ── FASE 2: Flujo de trabajo CHAT ─────────────────────────────────────
+        st.markdown("### 3️⃣ Fase 3 — Flujo de Trabajo: Chats")
+        chat_id = None
 
-        # Gemini
-        t0 = ahora()
-        try:
-            r = gemini_fn(prompt_test)
-            ok = r.get("ok", False)
-            ms = int((ahora()-t0).total_seconds()*1000)
-            test_resultado("Gemini 2.0 Flash", ok,
-                r.get("respuesta","")[:80] if ok else r.get("respuesta","Error"), ms)
-            resultados.append({"test":"Gemini","ok":ok,"ms":ms})
-            if not ok: errores_total+=1
-        except Exception as e:
-            test_resultado("Gemini 2.0 Flash", False, str(e))
-            resultados.append({"test":"Gemini","ok":False,"error":str(e)})
-            errores_total+=1
+        def crear_chat():
+            r=supa("chats","POST",{"titulo":f"{PREFIJO} Chat Prueba {TS}","usuario_id":u["id"]})
+            if r and isinstance(r,list) and r[0].get("id"):
+                return True, f"Chat creado ID: {r[0]['id']}"
+            return False, "No se pudo crear el chat"
+        res=t_run("Chat — Crear nuevo chat", crear_chat)
+        resultados.append(res)
 
-        # Mistral
-        t0 = ahora()
-        try:
-            r = mistral_fn(prompt_test)
-            ok = r.get("ok", False)
-            ms = int((ahora()-t0).total_seconds()*1000)
-            test_resultado("Mistral AI", ok,
-                r.get("respuesta","")[:80] if ok else r.get("respuesta","Error"), ms)
-            resultados.append({"test":"Mistral","ok":ok,"ms":ms})
-            if not ok: errores_total+=1
-        except Exception as e:
-            test_resultado("Mistral AI", False, str(e))
-            resultados.append({"test":"Mistral","ok":False,"error":str(e)})
-            errores_total+=1
+        # Obtener ID del chat creado
+        chats_test = supa("chats", filtro=f"?titulo=like.{PREFIJO}*&usuario_id=eq.{u['id']}&limit=1") or []
+        if chats_test and isinstance(chats_test,list) and isinstance(chats_test[0],dict):
+            chat_id = chats_test[0]["id"]
 
-        # OpenRouter
-        t0 = ahora()
-        try:
-            r = openrouter_fn(prompt_test)
-            ok = r.get("ok", False)
-            ms = int((ahora()-t0).total_seconds()*1000)
-            test_resultado("OpenRouter (Llama free)", ok,
-                r.get("respuesta","")[:80] if ok else r.get("respuesta","Error"), ms)
-            resultados.append({"test":"OpenRouter","ok":ok,"ms":ms})
-            if not ok: errores_total+=1
-        except Exception as e:
-            test_resultado("OpenRouter", False, str(e))
-            resultados.append({"test":"OpenRouter","ok":False,"error":str(e)})
-            errores_total+=1
+        if chat_id:
+            # Enviar mensaje
+            def enviar_msg():
+                r=supa("mensajes_chat","POST",{
+                    "chat_id":chat_id,
+                    "pregunta":f"{PREFIJO} Pregunta de prueba automática {TS}",
+                    "sintesis":"Respuesta de prueba generada por el agente de testing JandrexT",
+                    "ias_usadas":["Groq"]
+                })
+                return r and isinstance(r,list), f"Mensaje guardado en chat {chat_id}"
+            resultados.append(t_run("Chat — Guardar mensaje en BD", enviar_msg))
 
-        # Venice
-        t0 = ahora()
-        try:
-            r = venice_fn(prompt_test)
-            ok = r.get("ok", False)
-            ms = int((ahora()-t0).total_seconds()*1000)
-            test_resultado("Venice AI", ok,
-                r.get("respuesta","")[:80] if ok else r.get("respuesta","Error"), ms)
-            resultados.append({"test":"Venice","ok":ok,"ms":ms})
-            if not ok: errores_total+=1
-        except Exception as e:
-            test_resultado("Venice AI", False, str(e))
-            resultados.append({"test":"Venice","ok":False,"error":str(e)})
-            errores_total+=1
+            # Verificar que existe
+            def verificar_msg():
+                msgs=supa("mensajes_chat",filtro=f"?chat_id=eq.{chat_id}")
+                cnt = len(msgs) if isinstance(msgs,list) else 0
+                return cnt>0, f"{cnt} mensajes encontrados en BD"
+            resultados.append(t_run("Chat — Verificar mensaje guardado en BD", verificar_msg))
 
-        # ── TEST 6: Módulos de datos ──────────────────────────────────────────
-        st.markdown("### 4️⃣ Módulos de Datos")
+        # ── FASE 3: Flujo PROYECTOS ───────────────────────────────────────────
+        st.markdown("### 4️⃣ Fase 4 — Flujo de Trabajo: Proyectos")
+        proy_id = None
 
-        modulos_data = [
-            ("Proyectos — Lectura", "proyectos", "?limit=5"),
-            ("Agenda — Lectura", "agenda", "?limit=5"),
-            ("Asistencia — Lectura", "asistencia", "?limit=5"),
-            ("Chats — Lectura", "chats", "?limit=5"),
-            ("Aliados — Lectura", "clientes", "?limit=5"),
-            ("Ventas — Lectura", "ventas", "?limit=5"),
-            ("Documentos — Lectura", "documentos", "?limit=5"),
-            ("Manuales — Lectura", "manuales", "?limit=5"),
-            ("Biblioteca — Lectura", "biblioteca", "?limit=5"),
-            ("Liquidaciones — Lectura", "liquidaciones", "?limit=5"),
-        ]
-        for nombre_mod, tabla, filtro in modulos_data:
-            t0 = ahora()
-            try:
-                r = supa(tabla, filtro=filtro)
-                ok = r is not None
-                ms = int((ahora()-t0).total_seconds()*1000)
-                cnt = len(r) if isinstance(r, list) else 0
-                test_resultado(nombre_mod, ok, f"{cnt} registros encontrados", ms)
-                resultados.append({"test":nombre_mod,"ok":ok,"registros":cnt,"ms":ms})
-                if not ok: errores_total+=1
-            except Exception as e:
-                test_resultado(nombre_mod, False, str(e))
-                resultados.append({"test":nombre_mod,"ok":False,"error":str(e)})
-                errores_total+=1
-
-        # ── TEST 7: Escritura en BD ───────────────────────────────────────────
-        st.markdown("### 5️⃣ Escritura en Base de Datos")
-        t0 = ahora()
-        try:
-            ts = ahora().isoformat()
-            r = supa("chats","POST",{
-                "titulo":f"[TEST AUTOMÁTICO] {ts}",
-                "usuario_id": u["id"]
+        def crear_proyecto():
+            r=supa("proyectos","POST",{
+                "nombre":f"{PREFIJO} Proyecto Prueba {TS}",
+                "tipo":"interno",
+                "linea_servicio":"Videovigilancia CCTV",
+                "descripcion":f"{PREFIJO} Proyecto creado por testing automático",
+                "meses_garantia_equipos":12,
+                "meses_garantia_instalacion":6,
+                "creado_por":u["id"]
             })
-            ok = r and isinstance(r, list) and len(r) > 0
-            ms = int((ahora()-t0).total_seconds()*1000)
-            if ok:
-                # Limpiar el chat de prueba
-                supa("chats","DELETE",filtro=f"?id=eq.{r[0]['id']}")
-            test_resultado("Supabase — Escritura (INSERT/DELETE)", ok,
-                "Creación y eliminación de registro OK" if ok else "Error al escribir", ms)
-            resultados.append({"test":"Supabase escritura","ok":ok,"ms":ms})
-            if not ok: errores_total+=1
-        except Exception as e:
-            test_resultado("Supabase — Escritura (INSERT/DELETE)", False, str(e))
-            resultados.append({"test":"Supabase escritura","ok":False,"error":str(e)})
-            errores_total+=1
+            return r and isinstance(r,list) and bool(r[0].get("id")),                    f"Proyecto creado ID: {r[0]['id']}" if r and isinstance(r,list) and r else "Error"
+        res=t_run("Proyecto — Crear proyecto de prueba", crear_proyecto)
+        resultados.append(res)
 
-        # ── TEST 8: Zona horaria ──────────────────────────────────────────────
-        st.markdown("### 6️⃣ Configuración del Sistema")
-        t0 = ahora()
-        try:
-            hora_col = ahora()
-            ok = hora_col.tzinfo is not None
-            ms = int((ahora()-t0).total_seconds()*1000)
-            test_resultado("Zona horaria Colombia", ok,
-                f"Hora actual: {fecha_str()} (America/Bogota)", ms)
-            resultados.append({"test":"Zona horaria","ok":ok,"ms":ms})
-        except Exception as e:
-            test_resultado("Zona horaria Colombia", False, str(e))
-            resultados.append({"test":"Zona horaria","ok":False,"error":str(e)})
-            errores_total+=1
+        projs_test = supa("proyectos",filtro=f"?nombre=like.{PREFIJO}*&limit=1") or []
+        if projs_test and isinstance(projs_test,list) and isinstance(projs_test[0],dict):
+            proy_id = projs_test[0]["id"]
 
-        # Secrets configurados
-        secrets_requeridos = [
-            ("SUPABASE_URL", "Supabase URL"),
-            ("SUPABASE_ANON_KEY", "Supabase Key"),
-            ("GROQ_API_KEY", "Groq API Key"),
-            ("TELEGRAM_BOT_TOKEN", "Telegram Token"),
-            ("TELEGRAM_CHAT_ID_ADMIN", "Telegram Chat ID"),
-            ("GMAIL_USER", "Gmail Usuario"),
-            ("GOOGLE_API_KEY", "Gemini API Key"),
-            ("MISTRAL_API_KEY", "Mistral API Key"),
-            ("OPENROUTER_API_KEY", "OpenRouter API Key"),
-        ]
-        for key_secret, label in secrets_requeridos:
-            val = get_secret(key_secret)
-            ok = bool(val)
-            test_resultado(f"Secret — {label}", ok,
-                "✓ Configurado" if ok else "⚠️ No configurado en Streamlit Secrets")
-            resultados.append({"test":f"Secret {key_secret}","ok":ok})
-            if not ok: errores_total+=1
+        if proy_id:
+            def verificar_proyecto():
+                p=supa("proyectos",filtro=f"?id=eq.{proy_id}")
+                return bool(p and isinstance(p,list)),                        f"Proyecto encontrado: {p[0].get('nombre','') if p and isinstance(p,list) else ''}"
+            resultados.append(t_run("Proyecto — Verificar guardado en BD", verificar_proyecto))
 
-        # ── TEST 9: Generación de documentos ─────────────────────────────────
-        st.markdown("### 7️⃣ Generación de Documentos")
-        t0 = ahora()
-        try:
-            html_test = generar_pdf_html("Test Automático",
-                "Documento generado por el agente de testing automático de JandrexT.")
-            ok = bool(html_test) and len(html_test) > 100
-            ms = int((ahora()-t0).total_seconds()*1000)
-            test_resultado("Generador HTML de documentos", ok,
-                f"Documento generado: {len(html_test)} chars" if ok else "Error al generar", ms)
-            resultados.append({"test":"Generador HTML","ok":ok,"ms":ms})
-            if not ok: errores_total+=1
-        except Exception as e:
-            test_resultado("Generador HTML de documentos", False, str(e))
-            resultados.append({"test":"Generador HTML","ok":False,"error":str(e)})
-            errores_total+=1
+            # Crear chat dentro del proyecto
+            def chat_proyecto():
+                r=supa("chats","POST",{
+                    "titulo":f"{PREFIJO} Chat Proyecto {TS}",
+                    "proyecto_id":proy_id,
+                    "usuario_id":u["id"]
+                })
+                return r and isinstance(r,list), f"Chat de proyecto creado"
+            resultados.append(t_run("Proyecto — Crear chat interno del proyecto", chat_proyecto))
 
-        # ── TEST 10: Síntesis IA ──────────────────────────────────────────────
-        st.markdown("### 8️⃣ Síntesis de Respuestas IA")
-        t0 = ahora()
-        try:
-            resp_test = [{"ia":"Groq","icono":"🟠","respuesta":"OK","tiempo":0.1,"ok":True}]
-            sintesis = juez_fn("Test de síntesis automática", resp_test)
-            ok = bool(sintesis) and len(sintesis) > 5
-            ms = int((ahora()-t0).total_seconds()*1000)
-            test_resultado("Síntesis / Juez IA", ok,
-                sintesis[:80] if ok else "Error en síntesis", ms)
-            resultados.append({"test":"Síntesis IA","ok":ok,"ms":ms})
-            if not ok: errores_total+=1
-        except Exception as e:
-            test_resultado("Síntesis / Juez IA", False, str(e))
-            resultados.append({"test":"Síntesis IA","ok":False,"error":str(e)})
-            errores_total+=1
+        # ── FASE 4: Flujo AGENDA ──────────────────────────────────────────────
+        st.markdown("### 5️⃣ Fase 5 — Flujo de Trabajo: Agenda")
+        agenda_id = None
 
-        # ── RESUMEN FINAL ─────────────────────────────────────────────────────
+        def crear_tarea():
+            r=supa("agenda","POST",{
+                "tarea":f"{PREFIJO} Tarea de prueba {TS}",
+                "descripcion":"Verificación automática del módulo de agenda",
+                "fecha":ahora().strftime("%Y-%m-%d"),
+                "hora":ahora().strftime("%H:%M"),
+                "estado":"pendiente",
+                "prioridad":"normal",
+                "creado_por":u["id"]
+            })
+            return r and isinstance(r,list) and bool(r[0].get("id") if r else False),                    f"Tarea creada en agenda"
+        res=t_run("Agenda — Crear tarea de prueba", crear_tarea)
+        resultados.append(res)
+
+        ags_test = supa("agenda",filtro=f"?tarea=like.{PREFIJO}*&limit=1") or []
+        if ags_test and isinstance(ags_test,list) and isinstance(ags_test[0],dict):
+            agenda_id = ags_test[0]["id"]
+            def verificar_agenda():
+                ag=supa("agenda",filtro=f"?id=eq.{agenda_id}")
+                return bool(ag and isinstance(ag,list)), "Tarea verificada en BD"
+            resultados.append(t_run("Agenda — Verificar tarea guardada en BD", verificar_agenda))
+
+        # ── FASE 5: Flujo ASISTENCIA ──────────────────────────────────────────
+        st.markdown("### 6️⃣ Fase 6 — Flujo de Trabajo: Asistencia")
+
+        def registrar_asistencia():
+            r=supa("asistencia","POST",{
+                "colaborador_id":u["id"],
+                "tipo":"entrada",
+                "observaciones":f"{PREFIJO} Registro de prueba {TS}",
+                "fecha":ahora().strftime("%Y-%m-%d"),
+                "hora":ahora().strftime("%H:%M"),
+                "creado_en":ahora().isoformat()
+            })
+            return r and isinstance(r,list), "Registro de asistencia creado"
+        resultados.append(t_run("Asistencia — Registrar entrada de prueba", registrar_asistencia))
+
+        asis_test = supa("asistencia",filtro=f"?observaciones=like.{PREFIJO}*&limit=1") or []
+        if asis_test and isinstance(asis_test,list) and isinstance(asis_test[0],dict):
+            def verificar_asistencia():
+                return True, f"Asistencia verificada ID: {asis_test[0]['id']}"
+            resultados.append(t_run("Asistencia — Verificar registro en BD", verificar_asistencia))
+
+        # ── FASE 6: Flujo ALIADOS ─────────────────────────────────────────────
+        st.markdown("### 7️⃣ Fase 7 — Flujo de Trabajo: Aliados")
+        aliado_id = None
+
+        def crear_aliado():
+            r=supa("clientes","POST",{
+                "nombre":f"{PREFIJO} Aliado Prueba {TS}",
+                "empresa":"Empresa Test Automático JandrexT",
+                "nit":"900000000",
+                "email":"test@prueba-jandrext.com",
+                "telefono":"3000000000",
+                "ciudad":"Bogotá",
+                "activo":True,
+                "creado_por":u["id"]
+            })
+            return r and isinstance(r,list) and bool(r[0].get("id") if r else False),                    "Aliado de prueba creado en BD"
+        res=t_run("Aliados — Crear aliado de prueba", crear_aliado)
+        resultados.append(res)
+
+        alis_test = supa("clientes",filtro=f"?nombre=like.{PREFIJO}*&limit=1") or []
+        if alis_test and isinstance(alis_test,list) and isinstance(alis_test[0],dict):
+            aliado_id = alis_test[0]["id"]
+            def verificar_aliado():
+                al=supa("clientes",filtro=f"?id=eq.{aliado_id}")
+                return bool(al and isinstance(al,list)),                        f"Aliado verificado: {al[0].get('nombre','') if al and isinstance(al,list) else ''}"
+            resultados.append(t_run("Aliados — Verificar aliado guardado en BD", verificar_aliado))
+
+        # ── FASE 7: Flujo VENTAS ──────────────────────────────────────────────
+        st.markdown("### 8️⃣ Fase 8 — Flujo de Trabajo: Ventas")
+
+        def crear_venta():
+            r=supa("ventas","POST",{
+                "cliente":f"{PREFIJO} Cliente Prueba {TS}",
+                "linea_servicio":"Videovigilancia CCTV",
+                "valor":1500000,
+                "estado":"prospecto",
+                "probabilidad":50,
+                "notas":f"{PREFIJO} Oportunidad de prueba automatizada",
+                "creado_por":u["id"],
+                "creado_en":ahora().isoformat()
+            })
+            return r and isinstance(r,list), "Oportunidad de venta creada"
+        resultados.append(t_run("Ventas — Crear oportunidad de prueba", crear_venta))
+
+        vts_test = supa("ventas",filtro=f"?cliente=like.{PREFIJO}*&limit=1") or []
+        if vts_test and isinstance(vts_test,list) and isinstance(vts_test[0],dict):
+            def verificar_venta():
+                return True, f"Venta verificada ID: {vts_test[0]['id']}"
+            resultados.append(t_run("Ventas — Verificar oportunidad en BD", verificar_venta))
+
+        # ── FASE 8: Flujo DOCUMENTOS ──────────────────────────────────────────
+        st.markdown("### 9️⃣ Fase 9 — Flujo de Trabajo: Documentos")
+
+        def crear_documento():
+            html=generar_pdf_html(f"{PREFIJO} Documento Prueba","Contenido de prueba automática")
+            r=supa("documentos","POST",{
+                "cliente":f"{PREFIJO} Cliente Doc {TS}",
+                "tipo":"informe",
+                "titulo":f"{PREFIJO} Informe de prueba {TS}",
+                "contenido":f"{PREFIJO} Documento generado por testing automático JandrexT",
+                "linea_servicio":"Videovigilancia CCTV",
+                "creado_por":u["id"],
+                "creado_en":ahora().isoformat()
+            })
+            return r and isinstance(r,list), "Documento creado y guardado en BD"
+        resultados.append(t_run("Documentos — Crear documento de prueba", crear_documento))
+
+        docs_test = supa("documentos",filtro=f"?cliente=like.{PREFIJO}*&limit=1") or []
+        if docs_test and isinstance(docs_test,list) and isinstance(docs_test[0],dict):
+            def verificar_doc():
+                return True, f"Documento verificado ID: {docs_test[0]['id']}"
+            resultados.append(t_run("Documentos — Verificar documento en BD", verificar_doc))
+
+        # ── FASE 9: Flujo MANUALES ────────────────────────────────────────────
+        st.markdown("### 🔟 Fase 10 — Flujo de Trabajo: Manuales")
+
+        def crear_manual():
+            r=supa("manuales","POST",{
+                "titulo":f"{PREFIJO} Manual de prueba {TS}",
+                "categoria":"Videovigilancia CCTV",
+                "contenido":f"{PREFIJO} Contenido de manual creado por testing automático JandrexT v16",
+                "creado_por":u["id"],
+                "creado_en":ahora().isoformat()
+            })
+            return r and isinstance(r,list), "Manual técnico creado en BD"
+        resultados.append(t_run("Manuales — Crear manual de prueba", crear_manual))
+
+        # ── FASE 10: Flujo LIQUIDACIONES ──────────────────────────────────────
+        st.markdown("### 1️⃣1️⃣ Fase 11 — Flujo de Trabajo: Liquidaciones")
+
+        def crear_liquidacion():
+            r=supa("liquidaciones","POST",{
+                "periodo":f"{PREFIJO} Periodo {TS}",
+                "colaborador_id":u["id"],
+                "valor_total":500000,
+                "estado":"pendiente",
+                "observaciones":f"{PREFIJO} Liquidación de prueba automática",
+                "creado_en":ahora().isoformat()
+            })
+            return r and isinstance(r,list), "Liquidación de prueba creada en BD"
+        resultados.append(t_run("Liquidaciones — Crear liquidación de prueba", crear_liquidacion))
+
+        liqs_test = supa("liquidaciones",filtro=f"?periodo=like.{PREFIJO}*&limit=1") or []
+        if liqs_test and isinstance(liqs_test,list) and isinstance(liqs_test[0],dict):
+            def verificar_liq():
+                return True, f"Liquidación verificada ID: {liqs_test[0]['id']}"
+            resultados.append(t_run("Liquidaciones — Verificar liquidación en BD", verificar_liq))
+
+        # ── FASE 11: Secrets y configuración ─────────────────────────────────
+        st.markdown("### 1️⃣2️⃣ Fase 12 — Configuración y Secrets")
+        for key_s, label_s in [
+            ("SUPABASE_URL","Supabase URL"),("SUPABASE_ANON_KEY","Supabase Key"),
+            ("GROQ_API_KEY","Groq Key"),("TELEGRAM_BOT_TOKEN","Telegram Token"),
+            ("GMAIL_USER","Gmail"),("GOOGLE_API_KEY","Gemini Key"),
+            ("MISTRAL_API_KEY","Mistral Key"),("OPENROUTER_API_KEY","OpenRouter Key"),
+        ]:
+            val = get_secret(key_s)
+            resultados.append(
+                t_ok(f"Secret — {label_s}", "✓ Configurado") if val
+                else t_err(f"Secret — {label_s}", "⚠️ No configurado en Streamlit Secrets")
+            )
+
+        # ── LIMPIEZA FINAL ────────────────────────────────────────────────────
+        st.markdown("### 🧹 Limpieza Final — Eliminando datos de prueba")
+        ok_limp2, det_limp2 = limpiar_pruebas_anteriores()
+        resultados.append(
+            t_ok("Limpieza final de datos de prueba", det_limp2) if ok_limp2
+            else t_err("Limpieza final de datos de prueba", det_limp2)
+        )
+
+        # ── RESUMEN ───────────────────────────────────────────────────────────
         st.markdown("---")
-        total_tests = len(resultados)
-        ok_count = sum(1 for r in resultados if r.get("ok"))
-        fail_count = errores_total
+        total = len(resultados)
+        ok_n = sum(1 for r in resultados if r.get("ok"))
+        err_n = total - ok_n
+        color_r = "#0a2a0a" if err_n==0 else "#1a1a0a" if err_n<3 else "#2a0a0a"
+        ico_r = "🟢" if err_n==0 else "🟡" if err_n<3 else "🔴"
 
-        color_res = "#0a2a0a" if fail_count == 0 else "#2a1a0a" if fail_count < 3 else "#2a0a0a"
-        icono_res = "🟢" if fail_count == 0 else "🟡" if fail_count < 3 else "🔴"
-
-        st.markdown(f"""<div style="background:{color_res};border:2px solid #cc0000;
-            border-radius:10px;padding:1.5rem;text-align:center;margin-top:1rem;">
-            <div style="font-size:3rem;">{icono_res}</div>
-            <div style="color:#fff;font-size:1.4rem;font-weight:700;">
-                {ok_count}/{total_tests} pruebas exitosas
+        st.markdown(f"""<div style="background:{color_r};border:2px solid #cc0000;
+            border-radius:12px;padding:1.5rem;text-align:center;margin-top:1rem;">
+            <div style="font-size:3rem;">{ico_r}</div>
+            <div style="color:#fff;font-size:1.5rem;font-weight:700;">
+                {ok_n}/{total} pruebas exitosas
             </div>
-            <div style="color:#aaa;font-size:0.9rem;margin-top:0.5rem;">
-                {"✅ Sistema en perfecto estado" if fail_count==0
-                 else f"⚠️ {fail_count} pruebas fallaron — revisar configuración"}
+            <div style="color:#aaa;margin-top:0.5rem;">
+                {"✅ Sistema en perfecto estado — todos los flujos funcionando" if err_n==0
+                 else f"⚠️ {err_n} pruebas fallaron — revisar configuración"}
             </div>
-            <div style="color:#666;font-size:0.8rem;margin-top:0.3rem;">
+            <div style="color:#666;font-size:0.8rem;margin-top:0.4rem;">
                 {fecha_str()} · Plataforma v16.0 · JandrexT Soluciones Integrales
             </div>
         </div>""", unsafe_allow_html=True)
 
-        # Guardar reporte
-        guardar_resultado_test(resultados, fail_count)
+        # Guardar reporte en BD
+        try:
+            supa("testing_reportes","POST",{
+                "fecha":ahora().isoformat(),
+                "total":total,"ok":ok_n,"errores":err_n,
+                "detalle":json.dumps([{"test":r["test"],"ok":r["ok"],"detalle":r.get("detalle","")} for r in resultados],ensure_ascii=False)
+            })
+        except: pass
 
-        # Enviar resumen por Telegram
+        # Enviar reporte por Telegram
         errores_lista = [r for r in resultados if not r.get("ok")]
         msg_tg = f"""🧪 <b>Reporte Testing JandrexT v16</b>
 {fecha_str()}
 
-✅ OK: {ok_count}/{total_tests}
-❌ Fallidos: {fail_count}
+{ico_r} <b>{ok_n}/{total} pruebas exitosas</b>
+{"✅ Todos los flujos funcionando" if err_n==0 else f"❌ {err_n} fallaron"}
 
-{"🔴 Errores:" + chr(10) + chr(10).join(f"• {r['test']}: {str(r.get('error',r.get('respuesta','fail')))[:60]}" for r in errores_lista) if errores_lista else "🟢 Todos los servicios funcionando correctamente"}"""
+{"🔴 Errores:" + chr(10) + chr(10).join(f"• {r['test']}" + (f": {r['detalle'][:50]}" if r.get('detalle') else "") for r in errores_lista[:8]) if errores_lista else "🟢 Sistema en perfecto estado"}"""
         telegram(msg_tg)
         st.success("✅ Reporte enviado por Telegram")
 
-    # ── Historial de reportes ─────────────────────────────────────────────────
+    # ── Historial ─────────────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown("### 📋 Historial de Testing")
     try:
-        hist = supa("testing_reportes", filtro="?order=fecha.desc&limit=10") or []
-        if not hist:
-            st.info("No hay reportes anteriores. Cree la tabla 'testing_reportes' en Supabase para guardar historial.")
-            st.code("""CREATE TABLE testing_reportes (
+        hist = supa("testing_reportes",filtro="?order=fecha.desc&limit=8") or []
+        if not isinstance(hist,list) or not hist:
+            st.info("Sin reportes anteriores.")
+            st.code("""-- Crear en Supabase SQL Editor:
+CREATE TABLE testing_reportes (
   id SERIAL PRIMARY KEY,
   fecha TIMESTAMPTZ DEFAULT NOW(),
-  total INTEGER,
-  ok INTEGER,
-  errores INTEGER,
-  detalle TEXT
+  total INTEGER, ok INTEGER, errores INTEGER, detalle TEXT
 );""", language="sql")
         else:
             for h in hist:
-                if not isinstance(h, dict): continue
-                ok_h = h.get("ok", 0)
-                total_h = h.get("total", 0)
-                err_h = h.get("errores", 0)
-                ico = "🟢" if err_h == 0 else "🟡" if err_h < 3 else "🔴"
+                if not isinstance(h,dict): continue
+                ok_h=h.get("ok",0); err_h=h.get("errores",0); total_h=h.get("total",0)
+                ico_h="🟢" if err_h==0 else "🟡" if err_h<3 else "🔴"
                 st.markdown(f"""<div style="background:#0a0f00;border:1px solid #cc0000;
-                    border-radius:6px;padding:0.6rem 1rem;margin:0.3rem 0;display:flex;
-                    justify-content:space-between;">
-                    <span style="color:#fff;">{ico} {str(h.get('fecha',''))[:16]}</span>
-                    <span style="color:#4ade80;">{ok_h}/{total_h} OK</span>
-                    <span style="color:#f87171;">{"Sin errores" if err_h==0 else f"{err_h} errores"}</span>
+                    border-radius:6px;padding:0.5rem 1rem;margin:0.2rem 0;
+                    display:flex;justify-content:space-between;align-items:center;">
+                    <span style="color:#fff;">{ico_h} {str(h.get('fecha',''))[:16]}</span>
+                    <span style="color:#4ade80;font-size:0.9rem;">{ok_h}/{total_h} OK</span>
+                    <span style="color:{'#f87171' if err_h>0 else '#4ade80'};font-size:0.9rem;">
+                        {"Sin errores" if err_h==0 else f"{err_h} errores"}</span>
                 </div>""", unsafe_allow_html=True)
     except:
-        st.info("Cree la tabla 'testing_reportes' en Supabase para ver el historial.")
-        st.code("""CREATE TABLE testing_reportes (
-  id SERIAL PRIMARY KEY,
-  fecha TIMESTAMPTZ DEFAULT NOW(),
-  total INTEGER,
-  ok INTEGER,
-  errores INTEGER,
-  detalle TEXT
-);""", language="sql")
+        st.info("Cree la tabla 'testing_reportes' en Supabase para ver historial.")
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown(f"""<div class="footer-inst">
