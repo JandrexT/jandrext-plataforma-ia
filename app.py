@@ -229,6 +229,24 @@ def openrouter_fn(p):
         return {"ia":"OpenRouter","icono":"🔴","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
     except Exception as e: return {"ia":"OpenRouter","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
 
+def deepseek_fn(p):
+    try:
+        api_key=get_secret("DEEPSEEK_API_KEY")
+        if not api_key:
+            return {"ia":"DeepSeek","icono":"🔵","respuesta":"Sin API key","tiempo":0,"ok":False}
+        t=time.time()
+        h={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"}
+        r=req.post("https://api.deepseek.com/v1/chat/completions",
+            json={"model":"deepseek-chat",
+                  "messages":[{"role":"system","content":CONTEXTO},{"role":"user","content":p}],
+                  "max_tokens":1500},
+            headers=h,timeout=30)
+        if r.status_code==200:
+            return {"ia":"DeepSeek","icono":"🔵","respuesta":r.json()["choices"][0]["message"]["content"].strip(),"tiempo":round(time.time()-t,2),"ok":True}
+        return {"ia":"DeepSeek","icono":"🔴","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
+    except Exception as e:
+        return {"ia":"DeepSeek","icono":"🔴","respuesta":str(e)[:80],"tiempo":0,"ok":False}
+
 def groq_simple(prompt):
     try:
         from groq import Groq
@@ -1072,6 +1090,7 @@ with st.sidebar:
         st.session_state.ia_usar_v=_defaults["usar_v"]
         st.session_state.ia_usar_m=_defaults["usar_m"]
         st.session_state.ia_usar_o=_defaults["usar_o"]
+        st.session_state.ia_usar_d=_defaults.get("usar_d",True)
         st.session_state.ia_debug_mode=_defaults["debug"]
         st.session_state.ia_config_cargada=True
     usar_g=st.session_state.ia_usar_g
@@ -1079,6 +1098,7 @@ with st.sidebar:
     usar_v=st.session_state.ia_usar_v
     usar_m=st.session_state.ia_usar_m
     usar_o=st.session_state.ia_usar_o
+    usar_d=st.session_state.ia_usar_d
 
     st.markdown("---")
     if st.button("🚪 Cerrar sesión",use_container_width=True):
@@ -1137,6 +1157,7 @@ def panel_consulta(chat_id, ctx="General"):
         if usar_v: fns.append(lambda p: venice_fn(p))
         if usar_m: fns.append(lambda p: mistral_fn(p))
         if usar_o: fns.append(lambda p: openrouter_fn(p))
+        if usar_d: fns.append(lambda p: deepseek_fn(p))
         if not fns: fns=[lambda p: groq_fn(p)]  # Groq siempre como fallback
         with st.spinner("Consultando..."):
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(fns)) as ex:
@@ -2111,7 +2132,7 @@ elif sec=="config" and rol=="admin":
                 st.session_state.ia_usar_o=nuevo_o
                 # Persistir en Supabase para que sobreviva recargas
                 vals=json.dumps({"usar_g":nuevo_g,"usar_r":nuevo_r,"usar_v":nuevo_v,
-                                 "usar_m":nuevo_m,"usar_o":nuevo_o,"debug":False})
+                                 "usar_m":nuevo_m,"usar_o":nuevo_o,"usar_d":st.session_state.get("ia_usar_d",True),"debug":False})
                 try:
                     ex=supa("configuracion_ia",filtro="?clave=eq.ia_config")
                     if ex and isinstance(ex,list) and ex:
@@ -2366,7 +2387,7 @@ elif sec=="testing" and rol=="admin":
 
         # IAs
         st.markdown("### 2️⃣ Fase 2 — Inteligencias Artificiales")
-        for fn_ia, nombre_ia in [(groq_fn,"Groq/LLaMA"),(gemini_fn,"Gemini 2.0"),(mistral_fn,"Mistral"),(openrouter_fn,"OpenRouter"),(venice_fn,"Venice")]:
+        for fn_ia, nombre_ia in [(groq_fn,"Groq/LLaMA"),(gemini_fn,"Gemini 2.0"),(mistral_fn,"Mistral"),(openrouter_fn,"OpenRouter"),(deepseek_fn,"DeepSeek"),(venice_fn,"Venice")]:
             def _test_ia(fn=fn_ia, n=nombre_ia):
                 r=fn("Responde solo: TEST_OK")
                 return r.get("ok",False), r.get("respuesta","")[:60]
@@ -2632,6 +2653,7 @@ elif sec=="testing" and rol=="admin":
             ("GROQ_API_KEY","Groq Key"),("TELEGRAM_BOT_TOKEN","Telegram Token"),
             ("GMAIL_USER","Gmail"),("GOOGLE_API_KEY","Gemini Key"),
             ("MISTRAL_API_KEY","Mistral Key"),("OPENROUTER_API_KEY","OpenRouter Key"),
+            ("DEEPSEEK_API_KEY","DeepSeek Key"),
         ]:
             val = get_secret(key_s)
             resultados.append(
