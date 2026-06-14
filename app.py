@@ -246,6 +246,134 @@ def groq_simple(prompt):
         return r.choices[0].message.content.strip()
     except Exception as e: return f"❌ Error generando respuesta: {e}"
 
+# ── MESA IA — DIRECTIVA Y AGENTES ─────────────────────────────────────────────────────
+DIRECTIVA_FILOSOFICA = (
+    "DIRECTIVA FILOSÓFICA: Nunca decir que algo no se puede. "
+    "Siempre proponer el camino. Los obstáculos son variables medibles. "
+    "El error es información. Modo: construcción permanente. Sin techo."
+)
+
+def claude_fn(p):
+    try:
+        t=time.time()
+        api_key=get_secret("ANTHROPIC_API_KEY")
+        if not api_key: return {"ia":"Claude","icono":"U0001f7e4","rol":"auditor lógico","respuesta":"Sin API key","tiempo":0,"ok":False}
+        h={"x-api-key":api_key,"anthropic-version":"2023-06-01","content-type":"application/json"}
+        sys_ctx=CONTEXTO+"\n\n"+DIRECTIVA_FILOSOFICA+"\n\nRol en Mesa IA: AUDITOR LÓGICO — analiza consistencia, detecta contradicciones, propone ruta sólida."
+        r=req.post("https://api.anthropic.com/v1/messages",
+            json={"model":"claude-haiku-4-5-20251001","max_tokens":1500,
+                  "system":sys_ctx,"messages":[{"role":"user","content":p}]},
+            headers=h,timeout=30)
+        if r.status_code==200:
+            txt=r.json()["content"][0]["text"].strip()
+            return {"ia":"Claude","icono":"U0001f7e4","rol":"auditor lógico","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
+        return {"ia":"Claude","icono":"U0001f534","rol":"auditor lógico","respuesta":f"HTTP {r.status_code}: {r.text[:200]}","tiempo":0,"ok":False}
+    except Exception as e: return {"ia":"Claude","icono":"U0001f534","rol":"auditor lógico","respuesta":str(e),"tiempo":0,"ok":False}
+
+def chatgpt_fn(p):
+    try:
+        t=time.time()
+        api_key=get_secret("OPENAI_API_KEY")
+        if not api_key: return {"ia":"ChatGPT","icono":"U0001f7e2","rol":"hipótesis","respuesta":"Sin API key","tiempo":0,"ok":False}
+        h={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"}
+        sys_ctx=CONTEXTO+"\n\n"+DIRECTIVA_FILOSOFICA+"\n\nRol en Mesa IA: HIPÓTESIS — genera hipótesis creativas, posibilidades y escenarios alternativos."
+        r=req.post("https://api.openai.com/v1/chat/completions",
+            json={"model":"gpt-4o-mini",
+                  "messages":[{"role":"system","content":sys_ctx},{"role":"user","content":p}],
+                  "max_tokens":1500},
+            headers=h,timeout=30)
+        if r.status_code==200:
+            txt=r.json()["choices"][0]["message"]["content"].strip()
+            return {"ia":"ChatGPT","icono":"U0001f7e2","rol":"hipótesis","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
+        return {"ia":"ChatGPT","icono":"U0001f534","rol":"hipótesis","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
+    except Exception as e: return {"ia":"ChatGPT","icono":"U0001f534","rol":"hipótesis","respuesta":str(e),"tiempo":0,"ok":False}
+
+def gemini_mesa_fn(p):
+    try:
+        t=time.time()
+        api_key=get_secret("GOOGLE_API_KEY")
+        if not api_key: return {"ia":"Gemini","icono":"U0001f535","rol":"contextualizador","respuesta":"Sin API key","tiempo":0,"ok":False}
+        GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+        headers={"Content-Type":"application/json","x-goog-api-key":api_key}
+        sys_ctx=CONTEXTO+"\n\n"+DIRECTIVA_FILOSOFICA+"\n\nRol en Mesa IA: CONTEXTUALIZADOR — sitúa el problema en contexto amplio: tendencias, sector, referencias."
+        payload={"contents":[{"parts":[{"text":sys_ctx+"\n\nConsulta: "+p}]}]}
+        r=req.post(GEMINI_URL,headers=headers,json=payload,timeout=30)
+        if r.status_code==200:
+            txt=r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            return {"ia":"Gemini","icono":"U0001f535","rol":"contextualizador","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
+        return {"ia":"Gemini","icono":"U0001f534","rol":"contextualizador","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
+    except Exception as e: return {"ia":"Gemini","icono":"U0001f534","rol":"contextualizador","respuesta":str(e),"tiempo":0,"ok":False}
+
+def groq_mesa_fn(p):
+    try:
+        from groq import Groq; t=time.time()
+        sys_ctx=CONTEXTO+"\n\n"+DIRECTIVA_FILOSOFICA+"\n\nRol en Mesa IA: ANÁLISIS RÁPIDO — diagnóstico directo y accionable, prioriza claridad."
+        r=Groq(api_key=get_secret("GROQ_API_KEY")).chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role":"system","content":sys_ctx},{"role":"user","content":p}],max_tokens=1500)
+        return {"ia":"Groq","icono":"U0001f7e0","rol":"análisis rápido","respuesta":r.choices[0].message.content.strip(),"tiempo":round(time.time()-t,2),"ok":True}
+    except Exception as e: return {"ia":"Groq","icono":"U0001f534","rol":"análisis rápido","respuesta":str(e),"tiempo":0,"ok":False}
+
+def mistral_mesa_fn(p):
+    try:
+        t=time.time()
+        api_key=get_secret("MISTRAL_API_KEY")
+        if not api_key: return {"ia":"Mistral","icono":"U0001f7e1","rol":"perspectiva alternativa","respuesta":"Sin API key","tiempo":0,"ok":False}
+        h={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"}
+        sys_ctx=CONTEXTO+"\n\n"+DIRECTIVA_FILOSOFICA+"\n\nRol en Mesa IA: PERSPECTIVA ALTERNATIVA — desafía supuestos, ofrece ángulos no convencionales."
+        r=req.post("https://api.mistral.ai/v1/chat/completions",
+            json={"model":"mistral-small-latest",
+                  "messages":[{"role":"system","content":sys_ctx},{"role":"user","content":p}],
+                  "max_tokens":1500},
+            headers=h,timeout=30)
+        if r.status_code==200:
+            txt=r.json()["choices"][0]["message"]["content"].strip()
+            return {"ia":"Mistral","icono":"U0001f7e1","rol":"perspectiva alternativa","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
+        return {"ia":"Mistral","icono":"U0001f534","rol":"perspectiva alternativa","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
+    except Exception as e: return {"ia":"Mistral","icono":"U0001f534","rol":"perspectiva alternativa","respuesta":str(e),"tiempo":0,"ok":False}
+
+def mesa_ia_sintesis_fn(pregunta, resultados):
+    ok_r=[r for r in resultados if r["ok"]]
+    if not ok_r: return "Sin respuestas disponibles.", "Bajo"
+    resumen="\n\n".join([f"=== {r['ia']} ({r.get('rol','')}) ===\n{r['respuesta']}" for r in ok_r])
+    prompt_s=(DIRECTIVA_FILOSOFICA+
+        "\n\nEres Claude, sintetizador de la Mesa IA de JandrexT Soluciones Integrales."
+        f"\n\nPregunta: \"{pregunta}\"\n\nPerspectivas:\n{resumen}"
+        "\n\nResponde en este formato exacto:\n"
+        "SÍNTESIS: [párrafo integrador orientado a acción]\n"
+        "CONFIANZA: [Alto/Medio/Bajo]\n"
+        "RUTA DE ACCIÓN:\n1. [paso]\n2. [paso]\n3. [paso]\n"
+        "ADVERTENCIAS: [riesgos o 'Ninguna relevante']")
+    try:
+        api_key=get_secret("ANTHROPIC_API_KEY")
+        if api_key:
+            h={"x-api-key":api_key,"anthropic-version":"2023-06-01","content-type":"application/json"}
+            r=req.post("https://api.anthropic.com/v1/messages",
+                json={"model":"claude-haiku-4-5-20251001","max_tokens":2000,
+                      "messages":[{"role":"user","content":prompt_s}]},
+                headers=h,timeout=45)
+            if r.status_code==200:
+                txt=r.json()["content"][0]["text"].strip()
+                confianza="Medio"
+                if "CONFIANZA: Alto" in txt: confianza="Alto"
+                elif "CONFIANZA: Bajo" in txt: confianza="Bajo"
+                return txt, confianza
+    except: pass
+    try:
+        api_key=get_secret("GOOGLE_API_KEY")
+        if api_key:
+            GURL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+            hh={"Content-Type":"application/json","x-goog-api-key":api_key}
+            rr=req.post(GURL,headers=hh,json={"contents":[{"parts":[{"text":prompt_s}]}]},timeout=45)
+            if rr.status_code==200:
+                txt=rr.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                confianza="Medio"
+                if "CONFIANZA: Alto" in txt: confianza="Alto"
+                elif "CONFIANZA: Bajo" in txt: confianza="Bajo"
+                return txt, confianza
+    except: pass
+    return (ok_r[0]["respuesta"] if ok_r else "Sin síntesis."), "Bajo"
+
 def juez_fn(pregunta, respuestas):
     ok_resps = [r for r in respuestas if r["ok"]]
     if not ok_resps: return "No se obtuvo respuesta de ninguna fuente."
@@ -618,7 +746,7 @@ with st.sidebar:
               ("📚","biblioteca","Biblioteca"),("📄","documentos","Documentos"),
               ("📖","manuales","Manuales"),("💼","ventas","Ventas"),
               ("🤝","aliados","Aliados"),("📊","liquidaciones","Liquidaciones"),
-              ("👑","usuarios","Especialistas y Aliados"),("⚙️","config","Configuración")]
+              ("👑","usuarios","Especialistas y Aliados"),("🧠","mesa_ia","Mesa IA"),("⚙️","config","Configuración")]
     for ico,key,label in SECS:
         es_activo = sec_actual==key
         btn_style = "primary" if es_activo else "secondary"
@@ -1716,6 +1844,84 @@ elif sec=="config" and rol=="admin":
         c2.metric("Tareas pendientes",total_t)
         c3.metric("Manuales",total_m)
         st.caption(f"Última actualización: {fecha_str()} | Plataforma v16.0 | JandrexT Soluciones Integrales")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MESA IA — 5 AGENTES EN PARALELO (SOLO ADMIN)
+# ══════════════════════════════════════════════════════════════════════════════
+elif sec=="mesa_ia" and rol=="admin":
+    st.markdown("## U0001f9e0 Mesa IA — Consejo de Inteligencias")
+    st.markdown(f"> *{DIRECTIVA_FILOSOFICA}*")
+    col_left, col_right = st.columns([2,1])
+    with col_left:
+        proyectos_ia = supa("mesa_ia_projects", filtro=f"?user_id=eq.{u['id']}&order=created_at.desc") or []
+        proyectos_nombres = ["— Sin proyecto —"] + [p["nombre"] for p in proyectos_ia]
+        p_sel = st.selectbox("U0001f4c1 Proyecto", proyectos_nombres, key="mesa_proj_sel")
+        with st.expander("➕ Nuevo proyecto"):
+            np_nom = st.text_input("Nombre del proyecto", key="mesa_np_nom")
+            np_desc = st.text_area("Descripción", key="mesa_np_desc", height=60)
+            if st.button("Crear proyecto", key="mesa_crear_proj"):
+                if np_nom.strip():
+                    supa("mesa_ia_projects","POST",{"user_id":u["id"],"nombre":np_nom.strip(),"descripcion":np_desc.strip()})
+                    st.success("✅ Proyecto creado"); st.rerun()
+        st.markdown("---")
+        campo_voz_html5("Tu consulta a la Mesa IA","mesa_prompt",height=100,placeholder="Escribe la pregunta o desafío para los 5 agentes...")
+        prompt_mesa = st.session_state.get("mesa_prompt","")
+        if st.button("U0001f9e0 Consultar Mesa IA",type="primary",use_container_width=True,key="mesa_consultar"):
+            if prompt_mesa.strip():
+                fns_mesa=[lambda p:chatgpt_fn(p),lambda p:claude_fn(p),lambda p:gemini_mesa_fn(p),lambda p:groq_mesa_fn(p),lambda p:mistral_mesa_fn(p)]
+                with st.spinner("U0001f504 Consultando los 5 agentes en paralelo..."):
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+                        resultados=list(ex.map(lambda f:f(prompt_mesa),fns_mesa))
+                st.session_state["mesa_resultados"]=resultados
+                st.session_state["mesa_prompt_guardado"]=prompt_mesa
+                with st.spinner("U0001f9e0 Claude sintetizando consenso..."):
+                    sintesis,confianza=mesa_ia_sintesis_fn(prompt_mesa,resultados)
+                st.session_state["mesa_sintesis"]=sintesis
+                st.session_state["mesa_confianza"]=confianza
+                proj_id=next((p["id"] for p in proyectos_ia if p["nombre"]==p_sel),None)
+                resp_map={r["ia"]:r["respuesta"] for r in resultados}
+                supa("mesa_ia_sessions","POST",{
+                    "project_id":proj_id,"user_id":u["id"],
+                    "user_prompt":prompt_mesa,
+                    "gpt_response":resp_map.get("ChatGPT",""),
+                    "claude_response":resp_map.get("Claude",""),
+                    "gemini_response":resp_map.get("Gemini",""),
+                    "groq_response":resp_map.get("Groq",""),
+                    "mistral_response":resp_map.get("Mistral",""),
+                    "consensus_response":sintesis,
+                    "confidence_level":confianza,
+                    "status":"completed"})
+                st.session_state["mesa_prompt"]=""
+                st.rerun()
+        if "mesa_resultados" in st.session_state:
+            st.markdown("---")
+            st.markdown(f"**Pregunta:** {st.session_state.get('mesa_prompt_guardado','')}")
+            confianza=st.session_state.get("mesa_confianza","Medio")
+            col_c={"Alto":"U0001f7e2","Medio":"U0001f7e1","Bajo":"U0001f534"}.get(confianza,"U0001f7e1")
+            st.markdown(f"### {col_c} Confianza: **{confianza}**")
+            st.markdown("#### U0001f9e0 Síntesis de Claude")
+            st.info(st.session_state.get("mesa_sintesis",""))
+            st.markdown("#### U0001f5e3️ Respuestas individuales")
+            resultados_s=st.session_state["mesa_resultados"]
+            cols_r=st.columns(len(resultados_s))
+            for i,res in enumerate(resultados_s):
+                with cols_r[i]:
+                    status_ok="✅" if res["ok"] else "❌"
+                    st.markdown(f"**{res['icono']} {res['ia']}** {status_ok}")
+                    st.caption(f"Rol: {res.get('rol','')} | {res.get('tiempo',0)}s")
+                    if res["ok"]:
+                        st.markdown(f'<div style="background:#1a1a2e;padding:10px;border-radius:8px;font-size:0.85em;max-height:280px;overflow-y:auto">{res["respuesta"]}</div>',unsafe_allow_html=True)
+                    else:
+                        st.error(res["respuesta"])
+    with col_right:
+        st.markdown("### U0001f4cb Historial")
+        sesiones=supa("mesa_ia_sessions",filtro=f"?user_id=eq.{u['id']}&order=created_at.desc&limit=10") or []
+        for s in sesiones:
+            conf_icon={"Alto":"U0001f7e2","Medio":"U0001f7e1","Bajo":"U0001f534"}.get(s.get("confidence_level",""),"⚪")
+            with st.expander(f"{conf_icon} {(s.get('user_prompt') or '')[:40]}..."):
+                st.caption(s.get("created_at","")[:16])
+                st.markdown(f"**Confianza:** {s.get('confidence_level','')}")
+                st.markdown(s.get("consensus_response","")[:500])
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown(f"""<div class="footer-inst">
