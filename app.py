@@ -1842,90 +1842,106 @@ elif sec=="config" and rol=="admin":
 elif sec=="mesa_ia" and rol=="admin":
     st.markdown("## 🧠 Mesa IA — Consejo de Inteligencias")
     st.markdown(f"> *{DIRECTIVA_FILOSOFICA}*")
-    col_left, col_right = st.columns([2,1])
-    with col_left:
-        proyectos_ia = supa("mesa_ia_projects", filtro=f"?user_id=eq.{u['id']}&order=created_at.desc") or []
-        proyectos_nombres = ["— Sin proyecto —"] + [p["nombre"] for p in proyectos_ia]
-        p_sel = st.selectbox("📁 Proyecto", proyectos_nombres, key="mesa_proj_sel")
-        with st.expander("➕ Nuevo proyecto"):
-            np_nom = st.text_input("Nombre del proyecto", key="mesa_np_nom")
-            np_desc = st.text_area("Descripción", key="mesa_np_desc", height=60)
-            if st.button("Crear proyecto", key="mesa_crear_proj"):
+    proyectos_ia=supa("mesa_ia_projects",filtro=f"?user_id=eq.{u['id']}&order=created_at.asc")
+    col_proj,col_main=st.columns([1,3])
+    with col_proj:
+        st.markdown("#### 📁 Proyectos")
+        if st.button("🆕 Nuevo proyecto",use_container_width=True,key="mesa_btn_nuevo"):
+            st.session_state["mesa_new_proj"]=not st.session_state.get("mesa_new_proj",False)
+        if st.session_state.get("mesa_new_proj",False):
+            np_nom=st.text_input("Nombre del proyecto",key="mesa_np_nom")
+            np_desc=st.text_area("Descripción (opcional)",key="mesa_np_desc",height=60)
+            if st.button("Crear ✅",key="mesa_crear_p"):
                 if np_nom.strip():
-                    supa("mesa_ia_projects","POST",{"user_id":u["id"],"nombre":np_nom.strip(),"descripcion":np_desc.strip()})
-                    st.success("✅ Proyecto creado"); st.rerun()
+                    supa("mesa_ia_projects","POST",{"user_id":u["id"],"nombre":np_nom.strip(),"descripcion":np_desc})
+                    st.session_state["mesa_new_proj"]=False
+                    st.rerun()
         st.markdown("---")
-        campo_voz_html5("Tu consulta a la Mesa IA","mesa_prompt",height=100,placeholder="Escribe la pregunta o desafío para los 5 agentes...")
-        prompt_mesa = st.session_state.get("mesa_prompt","")
-        if st.button("🧠 Consultar Mesa IA",type="primary",use_container_width=True,key="mesa_consultar"):
-            if prompt_mesa.strip():
-                fns_mesa=[chatgpt_fn,claude_fn,gemini_mesa_fn,groq_mesa_fn,mistral_mesa_fn]
-                with st.spinner("🔄 Consultando los 5 agentes en paralelo..."):
-                    resultados=[]
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as ex:
-                        futs=[ex.submit(f,prompt_mesa) for f in fns_mesa]
-                        for fut in concurrent.futures.as_completed(futs,timeout=35):
-                            try: resultados.append(fut.result())
-                            except Exception as e: resultados.append({"ia":"Agente","icono":"🔴","rol":"desconocido","respuesta":f"Timeout/Error: {str(e)[:100]}","tiempo":0,"ok":False})
-                st.session_state["mesa_resultados"]=resultados
-                st.session_state["mesa_prompt_guardado"]=prompt_mesa
-                # PASO 1: Guardar respuestas individuales ANTES de sintetizar (dos pasos)
-                proj_id=next((p["id"] for p in proyectos_ia if p["nombre"]==p_sel),None)
-                resp_map={r["ia"]:r["respuesta"] for r in resultados}
-                sid=str(uuid.uuid4())
-                supa("mesa_ia_sessions","POST",{
-                    "id":sid,"project_id":proj_id,"user_id":u["id"],
-                    "user_prompt":prompt_mesa,
-                    "gpt_response":resp_map.get("ChatGPT",""),
-                    "claude_response":resp_map.get("Claude",""),
-                    "gemini_response":resp_map.get("Gemini",""),
-                    "groq_response":resp_map.get("Groq",""),
-                    "mistral_response":resp_map.get("Mistral",""),
-                    "status":"processing_synthesis","mode":"general"})
-                # PASO 2: Claude sintetiza (si falla, las 5 respuestas ya están guardadas)
-                with st.spinner("🧠 Claude sintetizando consenso..."):
-                    try: sintesis,confianza=mesa_ia_sintesis_fn(prompt_mesa,resultados)
-                    except Exception as e: sintesis=f"Error en síntesis: {str(e)[:200]}";confianza="Bajo"
-                st.session_state["mesa_sintesis"]=sintesis
-                st.session_state["mesa_confianza"]=confianza
-                # PASO 3: Actualizar registro con síntesis final
-                supa("mesa_ia_sessions","PATCH",{
-                    "consensus_response":sintesis,
-                    "confidence_level":confianza,
-                    "status":"completed"},
-                    filtro=f"?id=eq.{sid}")
-                st.session_state["mesa_prompt"]=""
+        p_sel=st.session_state.get("mesa_proj_sel",None)
+        for p in proyectos_ia:
+            es_activo=p_sel==p["id"]
+            if st.button(f"{'▶ ' if es_activo else ''}{p['nombre']}",key=f"psel_{p['id']}",use_container_width=True,type="primary" if es_activo else "secondary"):
+                st.session_state["mesa_proj_sel"]=p["id"]
+                st.session_state["mesa_proj_nombre"]=p["nombre"]
+                st.session_state.pop("mesa_resultados",None)
                 st.rerun()
-        if "mesa_resultados" in st.session_state:
-            st.markdown("---")
-            st.markdown(f"**Pregunta:** {st.session_state.get('mesa_prompt_guardado','')}")
-            confianza=st.session_state.get("mesa_confianza","Medio")
-            col_c={"Alto":"🟢","Medio":"🟡","Bajo":"🔴"}.get(confianza,"🟡")
-            st.markdown(f"### {col_c} Confianza: **{confianza}**")
-            st.markdown("#### 🧠 Síntesis de Claude")
-            st.info(st.session_state.get("mesa_sintesis",""))
-            st.markdown("#### 🗣️️ Respuestas individuales")
-            resultados_s=st.session_state["mesa_resultados"]
-            cols_r=st.columns(len(resultados_s))
-            for i,res in enumerate(resultados_s):
-                with cols_r[i]:
-                    status_ok="✅" if res["ok"] else "❌"
-                    st.markdown(f"**{res['icono']} {res['ia']}** {status_ok}")
-                    st.caption(f"Rol: {res.get('rol','')} | {res.get('tiempo',0)}s")
-                    if res["ok"]:
-                        st.markdown(f'<div style="background:#1a1a2e;padding:10px;border-radius:8px;font-size:0.85em;max-height:280px;overflow-y:auto">{res["respuesta"]}</div>',unsafe_allow_html=True)
-                    else:
-                        st.error(res["respuesta"])
-    with col_right:
-        st.markdown("### 📋 Historial")
-        sesiones=supa("mesa_ia_sessions",filtro=f"?user_id=eq.{u['id']}&order=created_at.desc&limit=10") or []
-        for s in sesiones:
-            conf_icon={"Alto":"🟢","Medio":"🟡","Bajo":"🔴"}.get(s.get("confidence_level",""),"⚪")
-            with st.expander(f"{conf_icon} {(s.get('user_prompt') or '')[:40]}..."):
-                st.caption(s.get("created_at","")[:16])
-                st.markdown(f"**Confianza:** {s.get('confidence_level','')}")
-                st.markdown(s.get("consensus_response","")[:500])
-
+        if not proyectos_ia:
+            st.info("Sin proyectos aún. Crea uno arriba.")
+    with col_main:
+        proj_id=st.session_state.get("mesa_proj_sel",None)
+        proj_nombre=st.session_state.get("mesa_proj_nombre","")
+        if not proj_id:
+            st.info("👈 Selecciona o crea un proyecto para comenzar.")
+        else:
+            st.markdown(f"### 📂 {proj_nombre}")
+            sesiones=supa("mesa_ia_sessions",filtro=f"?project_id=eq.{proj_id}&order=created_at.desc&limit=10")
+            if sesiones:
+                st.markdown("#### 📋 Historial del proyecto")
+                for s in sesiones:
+                    conf_icon={"Alto":"🟢","Medio":"🟡","Bajo":"🔴"}.get(s.get("confidence_level",""),"⚪")
+                    with st.expander(f"{conf_icon} {(s.get('user_prompt') or '')[:50]}...",expanded=False):
+                        st.caption(s.get("created_at","")[:16])
+                        st.markdown(f"**Confianza:** {s.get('confidence_level','')}")
+                        st.markdown(s.get("consensus_response","")[:500])
+                st.markdown("---")
+            if "mesa_resultados" in st.session_state:
+                confianza=st.session_state.get("mesa_confianza","Medio")
+                col_c={"Alto":"🟢","Medio":"🟡","Bajo":"🔴"}.get(confianza,"⚪")
+                st.markdown(f"**Pregunta:** {st.session_state.get('mesa_prompt_guardado','')}")
+                st.markdown(f"### {col_c} Confianza: **{confianza}**")
+                st.markdown("#### 🧠 Síntesis de Claude")
+                st.info(st.session_state.get("mesa_sintesis",""))
+                st.markdown("#### 🗣️ Respuestas individuales")
+                resultados_s=st.session_state["mesa_resultados"]
+                cols_r=st.columns(len(resultados_s))
+                for i,res in enumerate(resultados_s):
+                    with cols_r[i]:
+                        status_ok="✅" if res["ok"] else "❌"
+                        st.markdown(f"**{res['icono']} {res['ia']}** {status_ok}")
+                        st.caption(f"Rol: {res.get('rol','')} | {res.get('tiempo',0):.1f}s")
+                        if res["ok"]:
+                            st.markdown(f'<div style="background:#1a1a2e;padding:10px;border-radius:8px;font-size:0.85em">{res["respuesta"][:400]}</div>',unsafe_allow_html=True)
+                        else:
+                            st.error(res["respuesta"])
+                st.markdown("---")
+            st.markdown("#### 🆕 Nueva consulta")
+            campo_voz_html5("Tu consulta a la Mesa IA","mesa_prompt",height=100,placeholder="Escribe la pregunta o desafío para los 5 agentes...")
+            prompt_mesa=st.session_state.get("mesa_prompt","")
+            if st.button("🧠 Consultar Mesa IA",type="primary",use_container_width=True,key="mesa_consultar"):
+                if prompt_mesa.strip():
+                    fns_mesa=[chatgpt_fn,claude_fn,gemini_mesa_fn,groq_mesa_fn,mistral_mesa_fn]
+                    with st.spinner("🔄 Consultando los 5 agentes en paralelo..."):
+                        resultados=[]
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=15) as ex:
+                            futs=[ex.submit(f,prompt_mesa) for f in fns_mesa]
+                            for fut in concurrent.futures.as_completed(futs,timeout=35):
+                                try: resultados.append(fut.result())
+                                except Exception as e: resultados.append({"ia":"Agente","icono":"🔴","rol":"desconocido","respuesta":f"Timeout/Error: {str(e)[:100]}","tiempo":0,"ok":False})
+                    st.session_state["mesa_resultados"]=resultados
+                    st.session_state["mesa_prompt_guardado"]=prompt_mesa
+                    resp_map={r["ia"]:r["respuesta"] for r in resultados}
+                    sid=str(uuid.uuid4())
+                    supa("mesa_ia_sessions","POST",{
+                        "id":sid,"project_id":proj_id,"user_id":u["id"],
+                        "user_prompt":prompt_mesa,
+                        "gpt_response":resp_map.get("ChatGPT",""),
+                        "claude_response":resp_map.get("Claude",""),
+                        "gemini_response":resp_map.get("Gemini",""),
+                        "groq_response":resp_map.get("Groq",""),
+                        "mistral_response":resp_map.get("Mistral",""),
+                        "status":"processing_synthesis","mode":"general"})
+                    with st.spinner("🧠 Claude sintetizando consenso..."):
+                        try: sintesis,confianza=mesa_ia_sintesis_fn(prompt_mesa,resultados)
+                        except Exception as e: sintesis=f"Error en síntesis: {str(e)[:200]}";confianza="Bajo"
+                    st.session_state["mesa_sintesis"]=sintesis
+                    st.session_state["mesa_confianza"]=confianza
+                    supa("mesa_ia_sessions","PATCH",{
+                        "consensus_response":sintesis,
+                        "confidence_level":confianza,
+                        "status":"completed"},
+                        filtro=f"?id=eq.{sid}")
+                    st.session_state["mesa_prompt"]=""
+                    st.rerun()
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown(f"""<div class="footer-inst">
     <span class="footer-acc">JandrexT</span> Soluciones Integrales &nbsp;·&nbsp;
