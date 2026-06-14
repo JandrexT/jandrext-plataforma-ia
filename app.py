@@ -257,7 +257,7 @@ def claude_fn(p):
     try:
         t=time.time()
         api_key=get_secret("ANTHROPIC_API_KEY")
-        if not api_key: return {"ia":"Claude","icono":"U0001f7e4","rol":"auditor lógico","respuesta":"Sin API key","tiempo":0,"ok":False}
+        if not api_key: return {"ia":"Claude","icono":"🟤","rol":"auditor lógico","respuesta":"Sin API key","tiempo":0,"ok":False}
         h={"x-api-key":api_key,"anthropic-version":"2023-06-01","content-type":"application/json"}
         sys_ctx=CONTEXTO+"\n\n"+DIRECTIVA_FILOSOFICA+"\n\nRol en Mesa IA: AUDITOR LÓGICO — analiza consistencia, detecta contradicciones, propone ruta sólida."
         r=req.post("https://api.anthropic.com/v1/messages",
@@ -266,15 +266,15 @@ def claude_fn(p):
             headers=h,timeout=30)
         if r.status_code==200:
             txt=r.json()["content"][0]["text"].strip()
-            return {"ia":"Claude","icono":"U0001f7e4","rol":"auditor lógico","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
-        return {"ia":"Claude","icono":"U0001f534","rol":"auditor lógico","respuesta":f"HTTP {r.status_code}: {r.text[:200]}","tiempo":0,"ok":False}
-    except Exception as e: return {"ia":"Claude","icono":"U0001f534","rol":"auditor lógico","respuesta":str(e),"tiempo":0,"ok":False}
+            return {"ia":"Claude","icono":"🟤","rol":"auditor lógico","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
+        return {"ia":"Claude","icono":"🔴","rol":"auditor lógico","respuesta":f"HTTP {r.status_code}: {r.text[:200]}","tiempo":0,"ok":False}
+    except Exception as e: return {"ia":"Claude","icono":"🔴","rol":"auditor lógico","respuesta":str(e),"tiempo":0,"ok":False}
 
 def chatgpt_fn(p):
     try:
         t=time.time()
         api_key=get_secret("OPENAI_API_KEY")
-        if not api_key: return {"ia":"ChatGPT","icono":"U0001f7e2","rol":"hipótesis","respuesta":"Sin API key","tiempo":0,"ok":False}
+        if not api_key: return {"ia":"ChatGPT","icono":"🟢","rol":"hipótesis","respuesta":"Sin API key","tiempo":0,"ok":False}
         h={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"}
         sys_ctx=CONTEXTO+"\n\n"+DIRECTIVA_FILOSOFICA+"\n\nRol en Mesa IA: HIPÓTESIS — genera hipótesis creativas, posibilidades y escenarios alternativos."
         r=req.post("https://api.openai.com/v1/chat/completions",
@@ -284,9 +284,9 @@ def chatgpt_fn(p):
             headers=h,timeout=30)
         if r.status_code==200:
             txt=r.json()["choices"][0]["message"]["content"].strip()
-            return {"ia":"ChatGPT","icono":"U0001f7e2","rol":"hipótesis","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
-        return {"ia":"ChatGPT","icono":"U0001f534","rol":"hipótesis","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
-    except Exception as e: return {"ia":"ChatGPT","icono":"U0001f534","rol":"hipótesis","respuesta":str(e),"tiempo":0,"ok":False}
+            return {"ia":"ChatGPT","icono":"🟢","rol":"hipótesis","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
+        return {"ia":"ChatGPT","icono":"🔴","rol":"hipótesis","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
+    except Exception as e: return {"ia":"ChatGPT","icono":"🔴","rol":"hipótesis","respuesta":str(e),"tiempo":0,"ok":False}
 
 def gemini_mesa_fn(p):
     prompt_ext = DIRECTIVA_FILOSOFICA + "\n\nRol en Mesa IA: CONTEXTUALIZADOR — sitúa el problema en contexto amplio, tendencias del sector, referencias históricas, comparativas internacionales.\n\nPregunta: " + p
@@ -302,14 +302,14 @@ def groq_mesa_fn(p):
         r=Groq(api_key=get_secret("GROQ_API_KEY")).chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role":"system","content":sys_ctx},{"role":"user","content":p}],max_tokens=1500)
-        return {"ia":"Groq","icono":"U0001f7e0","rol":"análisis rápido","respuesta":r.choices[0].message.content.strip(),"tiempo":round(time.time()-t,2),"ok":True}
-    except Exception as e: return {"ia":"Groq","icono":"U0001f534","rol":"análisis rápido","respuesta":str(e),"tiempo":0,"ok":False}
+        return {"ia":"Groq","icono":"🟠","rol":"análisis rápido","respuesta":r.choices[0].message.content.strip(),"tiempo":round(time.time()-t,2),"ok":True}
+    except Exception as e: return {"ia":"Groq","icono":"🔴","rol":"análisis rápido","respuesta":str(e),"tiempo":0,"ok":False}
 
 def mistral_mesa_fn(p):
     try:
         t=time.time()
         api_key=get_secret("MISTRAL_API_KEY")
-        if not api_key: return {"ia":"Mistral","icono":"U0001f7e1","rol":"perspectiva alternativa","respuesta":"Sin API key","tiempo":0,"ok":False}
+        if not api_key: return {"ia":"Mistral","icono":"🟡","rol":"perspectiva alternativa","respuesta":"Sin API key","tiempo":0,"ok":False}
         h={"Authorization":f"Bearer {api_key}","Content-Type":"application/json"}
         sys_ctx=CONTEXTO+"\n\n"+DIRECTIVA_FILOSOFICA+"\n\nRol en Mesa IA: PERSPECTIVA ALTERNATIVA — desafía supuestos, ofrece ángulos no convencionales."
         r=req.post("https://api.mistral.ai/v1/chat/completions",
@@ -319,9 +319,9 @@ def mistral_mesa_fn(p):
             headers=h,timeout=30)
         if r.status_code==200:
             txt=r.json()["choices"][0]["message"]["content"].strip()
-            return {"ia":"Mistral","icono":"U0001f7e1","rol":"perspectiva alternativa","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
-        return {"ia":"Mistral","icono":"U0001f534","rol":"perspectiva alternativa","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
-    except Exception as e: return {"ia":"Mistral","icono":"U0001f534","rol":"perspectiva alternativa","respuesta":str(e),"tiempo":0,"ok":False}
+            return {"ia":"Mistral","icono":"🟡","rol":"perspectiva alternativa","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
+        return {"ia":"Mistral","icono":"🔴","rol":"perspectiva alternativa","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
+    except Exception as e: return {"ia":"Mistral","icono":"🔴","rol":"perspectiva alternativa","respuesta":str(e),"tiempo":0,"ok":False}
 
 def mesa_ia_sintesis_fn(pregunta, resultados):
     ok_r=[r for r in resultados if r["ok"]]
@@ -1840,13 +1840,13 @@ elif sec=="config" and rol=="admin":
 # MESA IA — 5 AGENTES EN PARALELO (SOLO ADMIN)
 # ══════════════════════════════════════════════════════════════════════════════
 elif sec=="mesa_ia" and rol=="admin":
-    st.markdown("## U0001f9e0 Mesa IA — Consejo de Inteligencias")
+    st.markdown("## 🧠 Mesa IA — Consejo de Inteligencias")
     st.markdown(f"> *{DIRECTIVA_FILOSOFICA}*")
     col_left, col_right = st.columns([2,1])
     with col_left:
         proyectos_ia = supa("mesa_ia_projects", filtro=f"?user_id=eq.{u['id']}&order=created_at.desc") or []
         proyectos_nombres = ["— Sin proyecto —"] + [p["nombre"] for p in proyectos_ia]
-        p_sel = st.selectbox("U0001f4c1 Proyecto", proyectos_nombres, key="mesa_proj_sel")
+        p_sel = st.selectbox("📁 Proyecto", proyectos_nombres, key="mesa_proj_sel")
         with st.expander("➕ Nuevo proyecto"):
             np_nom = st.text_input("Nombre del proyecto", key="mesa_np_nom")
             np_desc = st.text_area("Descripción", key="mesa_np_desc", height=60)
@@ -1857,7 +1857,7 @@ elif sec=="mesa_ia" and rol=="admin":
         st.markdown("---")
         campo_voz_html5("Tu consulta a la Mesa IA","mesa_prompt",height=100,placeholder="Escribe la pregunta o desafío para los 5 agentes...")
         prompt_mesa = st.session_state.get("mesa_prompt","")
-        if st.button("U0001f9e0 Consultar Mesa IA",type="primary",use_container_width=True,key="mesa_consultar"):
+        if st.button("🧠 Consultar Mesa IA",type="primary",use_container_width=True,key="mesa_consultar"):
             if prompt_mesa.strip():
                 fns_mesa=[chatgpt_fn,claude_fn,gemini_mesa_fn,groq_mesa_fn,mistral_mesa_fn]
                 with st.spinner("🔄 Consultando los 5 agentes en paralelo..."):
@@ -1900,11 +1900,11 @@ elif sec=="mesa_ia" and rol=="admin":
             st.markdown("---")
             st.markdown(f"**Pregunta:** {st.session_state.get('mesa_prompt_guardado','')}")
             confianza=st.session_state.get("mesa_confianza","Medio")
-            col_c={"Alto":"U0001f7e2","Medio":"U0001f7e1","Bajo":"U0001f534"}.get(confianza,"U0001f7e1")
+            col_c={"Alto":"🟢","Medio":"🟡","Bajo":"🔴"}.get(confianza,"🟡")
             st.markdown(f"### {col_c} Confianza: **{confianza}**")
-            st.markdown("#### U0001f9e0 Síntesis de Claude")
+            st.markdown("#### 🧠 Síntesis de Claude")
             st.info(st.session_state.get("mesa_sintesis",""))
-            st.markdown("#### U0001f5e3️ Respuestas individuales")
+            st.markdown("#### 🗣️️ Respuestas individuales")
             resultados_s=st.session_state["mesa_resultados"]
             cols_r=st.columns(len(resultados_s))
             for i,res in enumerate(resultados_s):
@@ -1917,10 +1917,10 @@ elif sec=="mesa_ia" and rol=="admin":
                     else:
                         st.error(res["respuesta"])
     with col_right:
-        st.markdown("### U0001f4cb Historial")
+        st.markdown("### 📋 Historial")
         sesiones=supa("mesa_ia_sessions",filtro=f"?user_id=eq.{u['id']}&order=created_at.desc&limit=10") or []
         for s in sesiones:
-            conf_icon={"Alto":"U0001f7e2","Medio":"U0001f7e1","Bajo":"U0001f534"}.get(s.get("confidence_level",""),"⚪")
+            conf_icon={"Alto":"🟢","Medio":"🟡","Bajo":"🔴"}.get(s.get("confidence_level",""),"⚪")
             with st.expander(f"{conf_icon} {(s.get('user_prompt') or '')[:40]}..."):
                 st.caption(s.get("created_at","")[:16])
                 st.markdown(f"**Confianza:** {s.get('confidence_level','')}")
