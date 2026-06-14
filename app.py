@@ -165,7 +165,7 @@ Tel: 317 391 0621 | proyectos@jandrext.com | Bogotá, Colombia
 Comportamiento: empático, profesional, práctico. Normas colombianas cuando aplique."""
 
 # ── IAs ───────────────────────────────────────────────────────────────────────
-def gemini_fn(p, modelo="gemini-2.0-flash"):
+def gemini_fn(p, modelo="gemini-1.5-flash"):
     try:
         t=time.time()
         api_key=get_secret("GOOGLE_API_KEY")
@@ -353,7 +353,7 @@ def juez_fn(pregunta, respuestas):
         api_key = get_secret("GOOGLE_API_KEY")
         if api_key:
             payload={"contents":[{"parts":[{"text":prompt_juez}]}]}
-            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
             r=req.post(url,json=payload,timeout=30)
             if r.status_code==200:
                 return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -363,7 +363,7 @@ def juez_fn(pregunta, respuestas):
     except: pass
     return max(ok_resps, key=lambda x: len(x["respuesta"]))["respuesta"]
 
-def ia_generar(prompt, modelo="gemini-2.0-flash"):
+def ia_generar(prompt, modelo="gemini-1.5-flash"):
     try:
         api_key=get_secret("GOOGLE_API_KEY")
         if not api_key:
@@ -395,7 +395,7 @@ Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones."""
         if api_key:
             mime = "application/pdf" if tipo=="pdf" else "image/jpeg"
             payload = {"contents":[{"parts":[{"text":prompt_json},{"inline_data":{"mime_type":mime,"data":b64}}]}]}
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
             r = req.post(url, json=payload, timeout=45)
             if r.status_code == 200:
                 txt = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -1891,7 +1891,7 @@ elif sec=="mesa_ia" and rol=="admin":
                 fns_mesa.append(lambda p: claude_fn(p, "auditor"))
                 nombres_mesa.append("Claude")
             if usar_gemini_m:
-                fns_mesa.append(lambda p: gemini_fn(p, "gemini-2.0-flash"))
+                fns_mesa.append(lambda p: gemini_fn(p, "gemini-1.5-flash"))
                 nombres_mesa.append("Gemini")
 
             if not fns_mesa:
