@@ -171,7 +171,7 @@ def gemini_fn(p, modelo="gemini-2.0-flash"):
         api_key=get_secret("GOOGLE_API_KEY")
         if not api_key: return {"ia":"Gemini","icono":"🔴","respuesta":"Sin API key","tiempo":0,"ok":False}
         payload={"contents":[{"parts":[{"text":CONTEXTO+"\n\nConsulta: "+p}]}]}
-        url=f"https://generativelanguage.googleapis.com/v1/models/{modelo}:generateContent?key={api_key}"
+        url=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
         r=req.post(url,json=payload,timeout=30)
         if r.status_code==200:
             txt=r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -353,7 +353,7 @@ def juez_fn(pregunta, respuestas):
         api_key = get_secret("GOOGLE_API_KEY")
         if api_key:
             payload={"contents":[{"parts":[{"text":prompt_juez}]}]}
-            url=f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={api_key}"
+            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
             r=req.post(url,json=payload,timeout=30)
             if r.status_code==200:
                 return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -369,7 +369,7 @@ def ia_generar(prompt, modelo="gemini-2.0-flash"):
         if not api_key:
             return groq_simple(prompt)
         payload={"contents":[{"parts":[{"text":CONTEXTO+"\n\n"+prompt}]}]}
-        url=f"https://generativelanguage.googleapis.com/v1/models/{modelo}:generateContent?key={api_key}"
+        url=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
         r=req.post(url,json=payload,timeout=30)
         if r.status_code==200:
             return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -395,7 +395,7 @@ Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones."""
         if api_key:
             mime = "application/pdf" if tipo=="pdf" else "image/jpeg"
             payload = {"contents":[{"parts":[{"text":prompt_json},{"inline_data":{"mime_type":mime,"data":b64}}]}]}
-            url = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
             r = req.post(url, json=payload, timeout=45)
             if r.status_code == 200:
                 txt = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
