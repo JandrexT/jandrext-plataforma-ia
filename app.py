@@ -171,8 +171,9 @@ def gemini_fn(p, modelo="gemini-2.0-flash"):
         api_key=get_secret("GOOGLE_API_KEY")
         if not api_key: return {"ia":"Gemini","icono":"🔴","respuesta":"Sin API key","tiempo":0,"ok":False}
         GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+        headers={"Content-Type":"application/json","x-goog-api-key":api_key}
         payload={"contents":[{"parts":[{"text":CONTEXTO+"\n\nConsulta: "+p}]}]}
-        r=req.post(GEMINI_URL,params={"key":api_key},json=payload,timeout=30)
+        r=req.post(GEMINI_URL,headers=headers,json=payload,timeout=30)
         if r.status_code==200:
             txt=r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
             return {"ia":"Gemini","icono":"🔵","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
