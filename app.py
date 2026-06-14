@@ -170,13 +170,13 @@ def gemini_fn(p, modelo="gemini-2.0-flash"):
         t=time.time()
         api_key=get_secret("GOOGLE_API_KEY")
         if not api_key: return {"ia":"Gemini","icono":"🔴","respuesta":"Sin API key","tiempo":0,"ok":False}
+        GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
         payload={"contents":[{"parts":[{"text":CONTEXTO+"\n\nConsulta: "+p}]}]}
-        url=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
-        r=req.post(url,json=payload,timeout=30)
+        r=req.post(GEMINI_URL,params={"key":api_key},json=payload,timeout=30)
         if r.status_code==200:
             txt=r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
             return {"ia":"Gemini","icono":"🔵","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
-        return {"ia":"Gemini","icono":"🔴","respuesta":f"HTTP {r.status_code} | URL: {url[:80]} | {r.text[:200]}","tiempo":0,"ok":False}
+        return {"ia":"Gemini","icono":"🔴","respuesta":f"HTTP {r.status_code} | {r.text[:300]}","tiempo":0,"ok":False}
     except Exception as e: return {"ia":"Gemini","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
 
 def groq_fn(p):
