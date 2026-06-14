@@ -353,9 +353,10 @@ def juez_fn(pregunta, respuestas):
     try:
         api_key = get_secret("GOOGLE_API_KEY")
         if api_key:
+            GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+            headers={"Content-Type":"application/json","x-goog-api-key":api_key}
             payload={"contents":[{"parts":[{"text":prompt_juez}]}]}
-            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-            r=req.post(url,json=payload,timeout=30)
+            r=req.post(GEMINI_URL,headers=headers,json=payload,timeout=30)
             if r.status_code==200:
                 return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
     except: pass
@@ -369,9 +370,10 @@ def ia_generar(prompt, modelo="gemini-2.0-flash"):
         api_key=get_secret("GOOGLE_API_KEY")
         if not api_key:
             return groq_simple(prompt)
+        GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+        headers={"Content-Type":"application/json","x-goog-api-key":api_key}
         payload={"contents":[{"parts":[{"text":CONTEXTO+"\n\n"+prompt}]}]}
-        url=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
-        r=req.post(url,json=payload,timeout=30)
+        r=req.post(GEMINI_URL,headers=headers,json=payload,timeout=30)
         if r.status_code==200:
             return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         return groq_simple(prompt)
