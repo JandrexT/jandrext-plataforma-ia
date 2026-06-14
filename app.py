@@ -176,7 +176,7 @@ def gemini_fn(p, modelo="gemini-2.0-flash"):
         if r.status_code==200:
             txt=r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
             return {"ia":"Gemini","icono":"🔵","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
-        return {"ia":"Gemini","icono":"🔴","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
+        return {"ia":"Gemini","icono":"🔴","respuesta":f"HTTP {r.status_code} | URL: {url[:80]} | {r.text[:200]}","tiempo":0,"ok":False}
     except Exception as e: return {"ia":"Gemini","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
 
 def groq_fn(p):
