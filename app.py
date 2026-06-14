@@ -177,7 +177,7 @@ def gemini_fn(p, modelo="gemini-2.0-flash"):
         if r.status_code==200:
             txt=r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
             return {"ia":"Gemini","icono":"🔵","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
-        return {"ia":"Gemini","icono":"🔴","respuesta":f"HTTP {r.status_code} | {r.text[:300]}","tiempo":0,"ok":False}
+        return {"ia":"Gemini","icono":"🔴","respuesta":f"HTTP {r.status_code} | {r.text[:200]}","tiempo":0,"ok":False}
     except Exception as e: return {"ia":"Gemini","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
 
 def groq_fn(p):
@@ -236,104 +236,6 @@ def openrouter_fn(p):
             return {"ia":"OpenRouter","icono":"🔷","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
         return {"ia":"OpenRouter","icono":"🔴","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
     except Exception as e: return {"ia":"OpenRouter","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
-
-
-# ── Claude / Anthropic ────────────────────────────────────────────────────────
-def claude_fn(p, rol="auditor"):
-    try:
-        import anthropic; t=time.time()
-        api_key=get_secret("ANTHROPIC_API_KEY")
-        if not api_key: return {"ia":"Claude","icono":"🟤","respuesta":"Sin API key ANTHROPIC_API_KEY","tiempo":0,"ok":False}
-        roles_sys={
-            "auditor":"Eres un auditor lógico experto. Tu única tarea es detectar inconsistencias, evaluar coherencia, señalar riesgos no evidentes y proponer cómo probar cada hipótesis. Por cada riesgo que detectes indica cómo medirlo y corregirlo. No generes la solución principal, examínala.",
-            "general":CONTEXTO
-        }
-        client=anthropic.Anthropic(api_key=api_key)
-        r=client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1500,
-            system=roles_sys.get(rol,CONTEXTO),
-            messages=[{"role":"user","content":p}]
-        )
-        txt=r.content[0].text.strip()
-        return {"ia":"Claude","icono":"🟤","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
-    except Exception as e: return {"ia":"Claude","icono":"🔴","respuesta":str(e)[:120],"tiempo":0,"ok":False}
-
-# ── OpenAI / GPT-4o ──────────────────────────────────────────────────────────
-def openai_fn(p, rol="generador"):
-    try:
-        from openai import OpenAI; t=time.time()
-        api_key=get_secret("OPENAI_API_KEY")
-        if not api_key: return {"ia":"ChatGPT","icono":"🟢","respuesta":"Sin API key OPENAI_API_KEY","tiempo":0,"ok":False}
-        roles_sys={
-            "generador":"Eres un analista cuantitativo y generador de hipótesis. Tu tarea es producir hipótesis concretas, calcular opciones y estructurar soluciones con ventajas y desventajas claras. Si no tienes datos verificables sobre un hecho, márcalo como [SIN DATOS].",
-            "general":CONTEXTO
-        }
-        client=OpenAI(api_key=api_key)
-        r=client.chat.completions.create(
-            model="gpt-4o",
-            max_tokens=1500,
-            messages=[{"role":"system","content":roles_sys.get(rol,CONTEXTO)},{"role":"user","content":p}]
-        )
-        txt=r.choices[0].message.content.strip()
-        return {"ia":"ChatGPT","icono":"🟢","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
-    except Exception as e: return {"ia":"ChatGPT","icono":"🔴","respuesta":str(e)[:120],"tiempo":0,"ok":False}
-
-# ── Agente de Consenso ────────────────────────────────────────────────────────
-def consenso_mesa(pregunta, r_gpt, r_claude, r_gemini):
-    try:
-        import anthropic
-        api_key=get_secret("ANTHROPIC_API_KEY")
-        if not api_key: return "Sin API key para el agente de consenso."
-        system_c="""Eres un agente de consenso. Recibes tres respuestas de diferentes IAs sobre el mismo tema.
-Tu tarea:
-1. Identificar ACUERDOS: qué coinciden los tres (alta confianza)
-2. Detectar CONTRADICCIONES: dónde difieren y cómo resolverlas con criterio lógico
-3. Rescatar APORTES ÚNICOS: qué aportó cada uno que los otros no mencionaron
-4. Entregar RECOMENDACIÓN FINAL: síntesis ejecutable y accionable
-
-Formato de respuesta:
-**ACUERDOS:** (puntos donde los tres coinciden)
-**CONTRADICCIONES:** (diferencias y cómo se resuelven)
-**APORTES ÚNICOS:** (lo exclusivo de cada modelo)
-**RECOMENDACIÓN FINAL:** (síntesis clara y ejecutable)
-**NIVEL DE CONFIANZA:** Alto / Medio / Bajo (con justificación breve)"""
-        contenido=f"""Pregunta original del usuario:
-{pregunta}
-
---- ChatGPT / Generador ---
-{r_gpt}
-
---- Claude / Auditor ---
-{r_claude}
-
---- Gemini / Contextualizador ---
-{r_gemini}"""
-        client=anthropic.Anthropic(api_key=api_key)
-        r=client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=2000,
-            system=system_c,
-            messages=[{"role":"user","content":contenido}]
-        )
-        return r.content[0].text.strip()
-    except Exception as e: return f"Error en agente de consenso: {e}"
-
-# ── Guardar sesión Mesa IA ────────────────────────────────────────────────────
-def guardar_sesion_mesa(user_id, modo, prompt, r_gpt, r_claude, r_gemini, consenso, confianza):
-    try:
-        supa("mesa_ia_sessions","POST",{
-            "user_id":str(user_id),
-            "mode":modo,
-            "user_prompt":prompt[:500],
-            "gpt_response":r_gpt[:3000] if r_gpt else "",
-            "claude_response":r_claude[:3000] if r_claude else "",
-            "gemini_response":r_gemini[:3000] if r_gemini else "",
-            "consensus_response":consenso[:4000] if consenso else "",
-            "confidence_level":confianza,
-            "status":"completed"
-        })
-    except: pass
 
 def groq_simple(prompt):
     try:
@@ -398,8 +300,9 @@ Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones."""
         if api_key:
             mime = "application/pdf" if tipo=="pdf" else "image/jpeg"
             payload = {"contents":[{"parts":[{"text":prompt_json},{"inline_data":{"mime_type":mime,"data":b64}}]}]}
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-            r = req.post(url, json=payload, timeout=45)
+            GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+            headers={"Content-Type":"application/json","x-goog-api-key":api_key}
+            r = req.post(GEMINI_URL, headers=headers, json=payload, timeout=45)
             if r.status_code == 200:
                 txt = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
                 res = parsear_json(txt)
@@ -712,7 +615,6 @@ with st.sidebar:
     else:
         SECS=[("🏠","inicio","Inicio"),("💬","chat","Chats"),("📁","proyectos","Proyectos"),
               ("📅","agenda","Agenda"),("👥","asistencia","Asistencia"),
-              ("🧠","mesa_ia","Mesa IA"),
               ("📚","biblioteca","Biblioteca"),("📄","documentos","Documentos"),
               ("📖","manuales","Manuales"),("💼","ventas","Ventas"),
               ("🤝","aliados","Aliados"),("📊","liquidaciones","Liquidaciones"),
@@ -1814,178 +1716,6 @@ elif sec=="config" and rol=="admin":
         c2.metric("Tareas pendientes",total_t)
         c3.metric("Manuales",total_m)
         st.caption(f"Última actualización: {fecha_str()} | Plataforma v16.0 | JandrexT Soluciones Integrales")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# MESA IA — ANÁLISIS MULTIAGENTE
-# ══════════════════════════════════════════════════════════════════════════════
-elif sec=="mesa_ia" and rol=="admin":
-    st.markdown("## 🧠 Mesa IA — Análisis Multiagente")
-    st.markdown("""<div style="background:#0a0f1a;border:1px solid #cc0000;border-radius:10px;padding:1rem 1.5rem;margin-bottom:1rem;">
-    <div style="color:#cc0000;font-size:0.75rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:0.5rem;">CÓMO FUNCIONA</div>
-    <div style="color:#ccc;font-size:0.88rem;line-height:1.6;">
-    Los tres modelos reciben tu solicitud con roles distintos y responden de forma independiente.<br>
-    <strong style="color:#fff;">ChatGPT</strong> genera hipótesis &nbsp;·&nbsp;
-    <strong style="color:#fff;">Claude</strong> audita y detecta riesgos &nbsp;·&nbsp;
-    <strong style="color:#fff;">Gemini</strong> aporta contexto externo<br>
-    Un agente de consenso sintetiza las tres respuestas y entrega una recomendación final.
-    </div></div>""", unsafe_allow_html=True)
-
-    MODOS_MESA = {
-        "general": "Consulta general",
-        "cotizacion": "Cotización comercial",
-        "software": "Arquitectura de software",
-        "informe": "Informe técnico",
-        "decision": "Decisión comercial",
-        "futbol_1x2": "Laboratorio fútbol 1X2"
-    }
-
-    col_conf, col_main = st.columns([1, 3])
-
-    with col_conf:
-        st.markdown("### ⚙️ Configuración")
-        modo_sel = st.selectbox("Modo de análisis", list(MODOS_MESA.keys()),
-            format_func=lambda x: MODOS_MESA[x])
-        st.markdown("**Modelos activos:**")
-        usar_gpt_m = st.toggle("🟢 ChatGPT / GPT-4o", value=True, key="mesa_gpt")
-        usar_claude_m = st.toggle("🟤 Claude / Auditor", value=True, key="mesa_claude")
-        usar_gemini_m = st.toggle("🔵 Gemini / Contexto", value=True, key="mesa_gemini")
-        mostrar_individual = st.toggle("Ver respuestas individuales", value=True, key="mesa_debug")
-
-        st.markdown("---")
-        st.markdown("### 📋 Historial")
-        sesiones = supa("mesa_ia_sessions", filtro=f"?user_id=eq.{u['id']}&order=created_at.desc&limit=8") or []
-        if sesiones and isinstance(sesiones, list):
-            for s in sesiones:
-                if not isinstance(s, dict): continue
-                conf_color = "#4ade80" if s.get("confidence_level")=="alto" else "#facc15" if s.get("confidence_level")=="medio" else "#f87171"
-                fecha_s = s.get("created_at","")[:16]
-                prompt_s = s.get("user_prompt","")[:35]
-                st.markdown(f"""<div style="background:#0a0a0a;border-left:3px solid {conf_color};
-                    padding:0.4rem 0.7rem;margin:0.2rem 0;border-radius:0 6px 6px 0;cursor:pointer;">
-                    <div style="color:#fff;font-size:0.8rem;">{prompt_s}...</div>
-                    <div style="color:#555;font-size:0.72rem;">{fecha_s} · {s.get('mode','')}</div>
-                </div>""", unsafe_allow_html=True)
-        else:
-            st.caption("Sin sesiones previas")
-
-    with col_main:
-        st.markdown("### 💬 Solicitud")
-        campo_voz_html5("Tu solicitud a la Mesa IA","mesa_prompt",height=120,
-            placeholder="Escribe o dicta tu consulta, problema o proyecto...")
-        prompt_mesa = st.session_state.get("mesa_prompt","")
-
-        c1, c2 = st.columns([3,1])
-        with c1:
-            btn_mesa = st.button("🧠 Analizar con los 3 modelos",
-                type="primary", use_container_width=True, key="btn_mesa")
-        with c2:
-            if st.button("🗑️ Limpiar", use_container_width=True, key="btn_limpiar_mesa"):
-                st.session_state["mesa_prompt"] = ""
-                st.rerun()
-
-        if btn_mesa and prompt_mesa.strip():
-            fns_mesa = []
-            nombres_mesa = []
-            if usar_gpt_m:
-                fns_mesa.append(lambda p: openai_fn(p, "generador"))
-                nombres_mesa.append("ChatGPT")
-            if usar_claude_m:
-                fns_mesa.append(lambda p: claude_fn(p, "auditor"))
-                nombres_mesa.append("Claude")
-            if usar_gemini_m:
-                fns_mesa.append(lambda p: gemini_fn(p, "gemini-2.0-flash"))
-                nombres_mesa.append("Gemini")
-
-            if not fns_mesa:
-                st.warning("⚠️ Activa al menos un modelo.")
-            else:
-                with st.spinner(f"Consultando {len(fns_mesa)} modelos en paralelo..."):
-                    t0 = time.time()
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=len(fns_mesa)) as ex:
-                        resultados_mesa = list(ex.map(lambda f: f(prompt_mesa), fns_mesa))
-                    t_total = round(time.time()-t0, 2)
-
-                r_gpt_txt = next((r["respuesta"] for r in resultados_mesa if r["ia"]=="ChatGPT" and r["ok"]), "")
-                r_claude_txt = next((r["respuesta"] for r in resultados_mesa if r["ia"]=="Claude" and r["ok"]), "")
-                r_gemini_txt = next((r["respuesta"] for r in resultados_mesa if r["ia"]=="Gemini" and r["ok"]), "")
-
-                if mostrar_individual:
-                    st.markdown("---")
-                    st.markdown("### 📊 Respuestas individuales")
-                    cols_r = st.columns(len(resultados_mesa))
-                    for i, res in enumerate(resultados_mesa):
-                        with cols_r[i]:
-                            cls = "badge-ok" if res["ok"] else "badge-err"
-                            st.markdown(f"""<div class="ia-card">
-                                <h4>{res['icono']} {res['ia']}</h4>
-                                <span class="{cls}">{"✓" if res["ok"] else "✗"}</span>
-                                <span class="t-seg"> ⏱{res['tiempo']}s</span>
-                            </div>""", unsafe_allow_html=True)
-                            if res["ok"]:
-                                with st.expander(f"Ver respuesta {res['ia']}"):
-                                    st.markdown(res["respuesta"])
-                            else:
-                                st.error(res["respuesta"][:100])
-
-                ok_mesa = [r for r in resultados_mesa if r["ok"]]
-                if len(ok_mesa) >= 2:
-                    st.markdown("---")
-                    st.markdown("### 🎯 Agente de Consenso")
-                    with st.spinner("Sintetizando respuestas..."):
-                        consenso_txt = consenso_mesa(prompt_mesa, r_gpt_txt, r_claude_txt, r_gemini_txt)
-
-                    conf_nivel = "alto"
-                    if "Medio" in consenso_txt or "MEDIO" in consenso_txt: conf_nivel = "medio"
-                    if "Bajo" in consenso_txt or "BAJO" in consenso_txt: conf_nivel = "bajo"
-                    conf_color = "#4ade80" if conf_nivel=="alto" else "#facc15" if conf_nivel=="medio" else "#f87171"
-
-                    st.markdown(f"""<div style="background:#0a0f00;border:2px solid {conf_color};
-                        border-radius:12px;padding:1.5rem;margin-top:0.5rem;">
-                        <div style="color:{conf_color};font-size:0.7rem;font-weight:700;
-                        letter-spacing:2px;text-transform:uppercase;margin-bottom:1rem;">
-                        🎯 SÍNTESIS · MESA IA JANDREXT · {t_total}s TOTAL</div>
-                        <div style="color:#f0f0f0;line-height:1.75;">{consenso_txt}</div>
-                    </div>""", unsafe_allow_html=True)
-
-                    with st.expander("📋 Copiar síntesis"):
-                        st.code(consenso_txt, language=None)
-
-                    guardar_sesion_mesa(u["id"], modo_sel, prompt_mesa,
-                        r_gpt_txt, r_claude_txt, r_gemini_txt, consenso_txt, conf_nivel)
-
-                    st.session_state["mesa_prompt"] = ""
-                    st.success(f"✅ Sesión guardada · {len(ok_mesa)} modelos · Confianza: {conf_nivel}")
-                elif len(ok_mesa) == 1:
-                    st.warning("⚠️ Solo un modelo respondió. Se necesitan al menos 2 para generar consenso.")
-                    st.markdown(ok_mesa[0]["respuesta"])
-                else:
-                    st.error("❌ Ningún modelo respondió. Verifique las API keys en Streamlit Secrets.")
-
-        elif btn_mesa:
-            st.warning("⚠️ Escribe o dicta una solicitud primero.")
-
-        st.markdown("---")
-        st.markdown("### 🧪 Probar conexiones")
-        col_t1, col_t2, col_t3 = st.columns(3)
-        with col_t1:
-            if st.button("🟢 Probar ChatGPT", use_container_width=True):
-                with st.spinner("..."):
-                    r = openai_fn("Responde solo: OK")
-                if r["ok"]: st.success(f"✅ GPT-4o OK · {r['tiempo']}s")
-                else: st.error(f"❌ {r['respuesta'][:80]}")
-        with col_t2:
-            if st.button("🟤 Probar Claude", use_container_width=True):
-                with st.spinner("..."):
-                    r = claude_fn("Responde solo: OK")
-                if r["ok"]: st.success(f"✅ Claude OK · {r['tiempo']}s")
-                else: st.error(f"❌ {r['respuesta'][:80]}")
-        with col_t3:
-            if st.button("🔵 Probar Gemini", use_container_width=True):
-                with st.spinner("..."):
-                    r = gemini_fn("Responde solo: OK")
-                if r["ok"]: st.success(f"✅ Gemini OK · {r['tiempo']}s")
-                else: st.error(f"❌ {r['respuesta'][:80]}")
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown(f"""<div class="footer-inst">
