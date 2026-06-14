@@ -170,7 +170,7 @@ def gemini_fn(p, modelo="gemini-2.0-flash"):
         t=time.time()
         api_key=get_secret("GOOGLE_API_KEY")
         if not api_key: return {"ia":"Gemini","icono":"🔴","respuesta":"Sin API key","tiempo":0,"ok":False}
-        GEMINI_URL="https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent"
+        GEMINI_URL="https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
         headers={"Content-Type":"application/json","x-goog-api-key":api_key}
         payload={"contents":[{"parts":[{"text":CONTEXTO+"\n\nConsulta: "+p}]}]}
         r=req.post(GEMINI_URL,headers=headers,json=payload,timeout=30)
@@ -255,7 +255,7 @@ def juez_fn(pregunta, respuestas):
     try:
         api_key = get_secret("GOOGLE_API_KEY")
         if api_key:
-            GEMINI_URL="https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent"
+            GEMINI_URL="https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
             headers={"Content-Type":"application/json","x-goog-api-key":api_key}
             payload={"contents":[{"parts":[{"text":prompt_juez}]}]}
             r=req.post(GEMINI_URL,headers=headers,json=payload,timeout=30)
@@ -272,7 +272,7 @@ def ia_generar(prompt, modelo="gemini-2.0-flash"):
         api_key=get_secret("GOOGLE_API_KEY")
         if not api_key:
             return groq_simple(prompt)
-        GEMINI_URL="https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent"
+        GEMINI_URL="https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
         headers={"Content-Type":"application/json","x-goog-api-key":api_key}
         payload={"contents":[{"parts":[{"text":CONTEXTO+"\n\n"+prompt}]}]}
         r=req.post(GEMINI_URL,headers=headers,json=payload,timeout=30)
@@ -300,7 +300,7 @@ Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones."""
         if api_key:
             mime = "application/pdf" if tipo=="pdf" else "image/jpeg"
             payload = {"contents":[{"parts":[{"text":prompt_json},{"inline_data":{"mime_type":mime,"data":b64}}]}]}
-            GEMINI_URL="https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent"
+            GEMINI_URL="https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
             headers={"Content-Type":"application/json","x-goog-api-key":api_key}
             r = req.post(GEMINI_URL, headers=headers, json=payload, timeout=45)
             if r.status_code == 200:
