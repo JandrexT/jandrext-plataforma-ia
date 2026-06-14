@@ -1859,29 +1859,41 @@ elif sec=="mesa_ia" and rol=="admin":
         prompt_mesa = st.session_state.get("mesa_prompt","")
         if st.button("U0001f9e0 Consultar Mesa IA",type="primary",use_container_width=True,key="mesa_consultar"):
             if prompt_mesa.strip():
-                fns_mesa=[lambda p:chatgpt_fn(p),lambda p:claude_fn(p),lambda p:gemini_mesa_fn(p),lambda p:groq_mesa_fn(p),lambda p:mistral_mesa_fn(p)]
-                with st.spinner("U0001f504 Consultando los 5 agentes en paralelo..."):
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
-                        resultados=list(ex.map(lambda f:f(prompt_mesa),fns_mesa))
+                fns_mesa=[chatgpt_fn,claude_fn,gemini_mesa_fn,groq_mesa_fn,mistral_mesa_fn]
+                with st.spinner("🔄 Consultando los 5 agentes en paralelo..."):
+                    resultados=[]
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as ex:
+                        futs=[ex.submit(f,prompt_mesa) for f in fns_mesa]
+                        for fut in concurrent.futures.as_completed(futs,timeout=35):
+                            try: resultados.append(fut.result())
+                            except Exception as e: resultados.append({"ia":"Agente","icono":"🔴","rol":"desconocido","respuesta":f"Timeout/Error: {str(e)[:100]}","tiempo":0,"ok":False})
                 st.session_state["mesa_resultados"]=resultados
                 st.session_state["mesa_prompt_guardado"]=prompt_mesa
-                with st.spinner("U0001f9e0 Claude sintetizando consenso..."):
-                    sintesis,confianza=mesa_ia_sintesis_fn(prompt_mesa,resultados)
-                st.session_state["mesa_sintesis"]=sintesis
-                st.session_state["mesa_confianza"]=confianza
+                # PASO 1: Guardar respuestas individuales ANTES de sintetizar (dos pasos)
                 proj_id=next((p["id"] for p in proyectos_ia if p["nombre"]==p_sel),None)
                 resp_map={r["ia"]:r["respuesta"] for r in resultados}
+                sid=str(uuid.uuid4())
                 supa("mesa_ia_sessions","POST",{
-                    "project_id":proj_id,"user_id":u["id"],
+                    "id":sid,"project_id":proj_id,"user_id":u["id"],
                     "user_prompt":prompt_mesa,
                     "gpt_response":resp_map.get("ChatGPT",""),
                     "claude_response":resp_map.get("Claude",""),
                     "gemini_response":resp_map.get("Gemini",""),
                     "groq_response":resp_map.get("Groq",""),
                     "mistral_response":resp_map.get("Mistral",""),
+                    "status":"processing_synthesis","mode":"general"})
+                # PASO 2: Claude sintetiza (si falla, las 5 respuestas ya están guardadas)
+                with st.spinner("🧠 Claude sintetizando consenso..."):
+                    try: sintesis,confianza=mesa_ia_sintesis_fn(prompt_mesa,resultados)
+                    except Exception as e: sintesis=f"Error en síntesis: {str(e)[:200]}";confianza="Bajo"
+                st.session_state["mesa_sintesis"]=sintesis
+                st.session_state["mesa_confianza"]=confianza
+                # PASO 3: Actualizar registro con síntesis final
+                supa("mesa_ia_sessions","PATCH",{
                     "consensus_response":sintesis,
                     "confidence_level":confianza,
-                    "status":"completed"})
+                    "status":"completed"},
+                    filtro=f"?id=eq.{sid}")
                 st.session_state["mesa_prompt"]=""
                 st.rerun()
         if "mesa_resultados" in st.session_state:
