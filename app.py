@@ -289,21 +289,12 @@ def chatgpt_fn(p):
     except Exception as e: return {"ia":"ChatGPT","icono":"U0001f534","rol":"hipótesis","respuesta":str(e),"tiempo":0,"ok":False}
 
 def gemini_mesa_fn(p):
-    try:
-        t=time.time()
-        api_key=get_secret("GOOGLE_API_KEY")
-        if not api_key: return {"ia":"Gemini","icono":"U0001f535","rol":"contextualizador","respuesta":"Sin API key","tiempo":0,"ok":False}
-        GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-        headers={"Content-Type":"application/json","x-goog-api-key":api_key}
-        sys_ctx=CONTEXTO+"\n\n"+DIRECTIVA_FILOSOFICA+"\n\nRol en Mesa IA: CONTEXTUALIZADOR — sitúa el problema en contexto amplio: tendencias, sector, referencias."
-        payload={"contents":[{"parts":[{"text":sys_ctx+"\n\nConsulta: "+p}]}]}
-        r=req.post(GEMINI_URL,headers=headers,json=payload,timeout=30)
-        if r.status_code==200:
-            txt=r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-            return {"ia":"Gemini","icono":"U0001f535","rol":"contextualizador","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
-        return {"ia":"Gemini","icono":"U0001f534","rol":"contextualizador","respuesta":f"HTTP {r.status_code}","tiempo":0,"ok":False}
-    except Exception as e: return {"ia":"Gemini","icono":"U0001f534","rol":"contextualizador","respuesta":str(e),"tiempo":0,"ok":False}
-
+    prompt_ext = DIRECTIVA_FILOSOFICA + "\n\nRol en Mesa IA: CONTEXTUALIZADOR — sitúa el problema en contexto amplio, tendencias del sector, referencias históricas, comparativas internacionales.\n\nPregunta: " + p
+    r = gemini_fn(prompt_ext)
+    r["rol"] = "contextualizador"
+    r["ia"] = "Gemini"
+    r["icono"] = "🔵"
+    return r
 def groq_mesa_fn(p):
     try:
         from groq import Groq; t=time.time()
