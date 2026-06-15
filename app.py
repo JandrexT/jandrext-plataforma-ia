@@ -2123,8 +2123,7 @@ elif sec=="mesa_ia" and rol=="admin":
             if top_ruta_tk.get("hipotesis"):
                 lineas_tk.append(f"  IA         : {top_ruta_tk.get('hipotesis','')}")
             lineas_tk.append("━"*44)
-            st.code("
-".join(lineas_tk),language=None)
+            st.code(chr(10).join(lineas_tk),language=None)
             st.caption("📋 Selecciona todo el texto de arriba y cópialo directo a Wplay o tu plataforma de apuestas.")
             # Selector de ruta alternativa
             with st.expander("🔄 Elegir otra ruta como ticket"):
@@ -2142,8 +2141,7 @@ elif sec=="mesa_ia" and rol=="admin":
                     if alt_ruta.get("hipotesis"):
                         alt_lineas.append(f"  IA         : {alt_ruta.get('hipotesis','')}")
                     alt_lineas.append("━"*44)
-                    st.code("
-".join(alt_lineas),language=None)
+                    st.code(chr(10).join(alt_lineas),language=None)
 
         with tab_a:
             bid_a_f=st.session_state.get("ftbl_bloque_sel")
