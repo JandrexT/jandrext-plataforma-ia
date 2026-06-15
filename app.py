@@ -828,60 +828,99 @@ def detectar_texto_futbol_1x2(texto):
     return False
 
 def limpiar_texto_wplay(texto):
-    """Elimina ★, códigos de evento y artefactos de navegación. PRESERVA saltos de línea."""
+    """Universal Wplay: ★ como separador de línea, luego limpieza. PRESERVA newlines."""
     import re
-    texto=texto.replace("★","").replace("⭐","")
-    # Eliminar códigos de evento (números solos > 200)
+    # ★ separa elementos en Wplay — convertir a newline
+    texto=texto.replace("★","\n").replace("⭐","\n")
+    # Eliminar códigos de evento (3+ dígitos > 200)
     texto=re.sub(r'\b[2-9]\d{2,}\b','',texto)
     # Eliminar artefactos de paginación
     texto=re.sub(r'P[aá]gina ant\.?|Siguiente p[aá]gina|\d+\s*/\s*\d+','',texto,flags=re.IGNORECASE)
-    # Colapsar espacios DENTRO de cada línea, pero PRESERVAR saltos de línea
+    # Separar cuota pegada a siguiente hora: "7.00 17:00" → "7.00\n17:00"
+    texto=re.sub(r'(\d+\.\d+)\s+(\d{1,2}:\d{2})',r'\1\n\2',texto)
+    # Colapsar espacios dentro de cada línea, preservar newlines
     lineas=[re.sub(r'[ \t]+',' ',l).strip() for l in texto.split('\n')]
     return '\n'.join(l for l in lineas if l)
 
 def parser_regex_wplay(texto_limpio):
-    """Parser máquina de estados para formato Wplay real (un elemento por línea).
-    Maneja: hora sola / fecha sola / equipo solo / cuota sola / Empate solo."""
+    """Parser universal Wplay — maneja:
+    A) 'Equipo X.XX' en misma línea + 'Empate X.XX' en misma línea (post-limpieza ★→newline)
+    B) 'Equipo' en línea + 'X.XX' en siguiente (un elemento por línea)
+    C) '14:00 15 Jun' hora+fecha combinada en misma línea."""
     import re
-    partidos=[]
-    lineas=[l.strip() for l in texto_limpio.split('\n') if l.strip()]
-    hora=""; fecha=""
-    i=0
-    while i < len(lineas):
+    def _es_cuota(s): return bool(re.match(r'^\d+\.\d+$',s))
+    def _es_empate(s): return bool(re.match(r'^[Ee]mpate$',s))
+    def _es_empate_cuota(s):
+        m=re.match(r'^[Ee]mpate\s+(\d+\.\d+)$',s); return m.group(1) if m else None
+    def _es_hora_fecha(s): return bool(re.match(r'^\d{1,2}:\d{2}\s+\d{1,2}\s+\w+',s))
+    def _es_hora(s): return bool(re.match(r'^\d{1,2}:\d{2}$',s))
+    def _es_fecha(s): return bool(re.match(r'^\d{1,2}\s+[A-Za-z\u00c0-\u024f]{3,}$',s))
+    def _team_cuota(s):
+        m=re.match(r'^(.+?)\s+(\d+\.\d+)$',s)
+        return (m.group(1).strip(),float(m.group(2))) if m else None
+    def _full_match_line(s):
+        """Detecta 'Equipo X.XX Empate X.XX' todo en una línea (formato compacto Wplay)."""
+        m=re.match(r'^(.+?)\s+(\d+\.\d+)\s+[Ee]mpate\s+(\d+\.\d+)$',s)
+        return (m.group(1).strip(),float(m.group(2)),float(m.group(3))) if m else None
+    partidos=[]; lineas=[l.strip() for l in texto_limpio.split('\n') if l.strip()]
+    hora=""; fecha=""; i=0
+    while i<len(lineas):
         l=lineas[i]
-        # Hora sola (ej: "11:00")
-        if re.match(r'^\d{1,2}:\d{2}$',l):
-            hora=l; i+=1; continue
-        # Fecha sola (ej: "15 Jun")
-        if re.match(r'^\d{1,2}\s+[A-Za-z\u00c0-\u024f]{3,}$',l):
-            fecha=l; i+=1; continue
-        # Cuota sola — saltar
-        if re.match(r'^\d+\.\d+$',l):
+        if _es_hora_fecha(l):
+            mhf=re.match(r'^(\d{1,2}:\d{2})\s+(.+)$',l)
+            if mhf: hora=mhf.group(1); fecha=mhf.group(2).strip()
             i+=1; continue
-        # "Empate" solo — saltar
-        if re.match(r'^[Ee]mpate$',l):
-            i+=1; continue
-        # Posible equipo: siguiente línea debe ser cuota
-        if i+1<len(lineas) and re.match(r'^\d+\.\d+$',lineas[i+1]):
+        if _es_hora(l): hora=l; i+=1; continue
+        if _es_fecha(l): fecha=l; i+=1; continue
+        if _es_cuota(l): i+=1; continue
+        if _es_empate(l): i+=1; continue
+        # Formato compacto: "Equipo1 X.XX Empate X.XX" en misma línea
+        fm=_full_match_line(l)
+        if fm:
+            equipo1,cuota1,cuotax=fm; i+=1
+            equipo2=None; cuota2=None
+            if i<len(lineas):
+                tc2=_team_cuota(lineas[i])
+                if tc2 and not _es_empate(tc2[0]):
+                    equipo2,cuota2=tc2; i+=1
+                elif i+1<len(lineas) and _es_cuota(lineas[i+1]):
+                    equipo2=lineas[i]; cuota2=float(lineas[i+1]); i+=2
+            if equipo2:
+                partidos.append({"local":equipo1,"visitante":equipo2,"cuota_1":cuota1,"cuota_x":cuotax,"cuota_2":cuota2,"hora":hora,"fecha":fecha,"fuente":"manual","cuotas_estimadas":False,"contexto_h2h":"","observacion":""})
+            continue
+        # Intentar extraer partido — equipo1+cuota1
+        equipo1=None; cuota1=None
+        tc=_team_cuota(l)
+        if tc and not _es_empate(tc[0]):
+            equipo1,cuota1=tc; i+=1
+        elif i+1<len(lineas) and _es_cuota(lineas[i+1]):
             equipo1=l; cuota1=float(lineas[i+1]); i+=2
-            # Buscar Empate
-            if i<len(lineas) and re.match(r'^[Ee]mpate$',lineas[i]):
+        if equipo1 is None: i+=1; continue
+        # Cuota empate
+        cuotax=None
+        if i<len(lineas):
+            ec=_es_empate_cuota(lineas[i])
+            if ec: cuotax=float(ec); i+=1
+            elif _es_empate(lineas[i]):
                 i+=1
-                # Buscar cuota empate
-                if i<len(lineas) and re.match(r'^\d+\.\d+$',lineas[i]):
-                    cuotax=float(lineas[i]); i+=1
-                    # Buscar equipo2 (siguiente línea es cuota)
-                    if i<len(lineas) and i+1<len(lineas) and re.match(r'^\d+\.\d+$',lineas[i+1]):
-                        equipo2=lineas[i]; cuota2=float(lineas[i+1]); i+=2
-                        partidos.append({
-                            "local":equipo1,"visitante":equipo2,
-                            "cuota_1":cuota1,"cuota_x":cuotax,"cuota_2":cuota2,
-                            "hora":hora,"fecha":fecha,
-                            "fuente":"manual","cuotas_estimadas":False,
-                            "contexto_h2h":"","observacion":""
-                        })
-                        continue
-        i+=1
+                if i<len(lineas) and _es_cuota(lineas[i]): cuotax=float(lineas[i]); i+=1
+        if cuotax is None: continue
+        # Equipo2+cuota2
+        equipo2=None; cuota2=None
+        if i<len(lineas):
+            tc2=_team_cuota(lineas[i])
+            if tc2 and not _es_empate(tc2[0]):
+                equipo2,cuota2=tc2; i+=1
+            elif i+1<len(lineas) and _es_cuota(lineas[i+1]):
+                equipo2=lineas[i]; cuota2=float(lineas[i+1]); i+=2
+        if equipo2 is None: continue
+        partidos.append({
+            "local":equipo1,"visitante":equipo2,
+            "cuota_1":cuota1,"cuota_x":cuotax,"cuota_2":cuota2,
+            "hora":hora,"fecha":fecha,
+            "fuente":"manual","cuotas_estimadas":False,
+            "contexto_h2h":"","observacion":""
+        })
     return partidos
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1865,47 +1904,77 @@ Sé directo, concreto y accionable. Máximo 400 palabras."""
     # ════════════════════════════════════════════════════════════════════
     elif st.session_state["mesa_modo"]=="futbol":
         st.markdown("## ⚽ Laboratorio Fútbol 1X2 — Multiverso 150")
-        st.caption("5 IAs analizan en paralelo • 150 rutas con control de exposición 65% • Ticket copiable para Wplay")
+        st.caption("5 IAs analizan en paralelo • 150 rutas con control de exposición 65% • Tickets diferenciados • Modo simulado")
 
-        tab_f1,tab_f2,tab_f3,tab_f4=st.tabs(["📥 Cargar Partidos","📊 150 Rutas IA","📈 Resultados","📚 Biblioteca"])
+        # ── PING SILENCIOSO GEMINI al entrar al módulo
+        if "ftbl_gemini_status" not in st.session_state:
+            with st.spinner("🔍 Verificando conexión con IAs..."):
+                _ping=gemini_deporte_fn("Responde solo: OK")
+                st.session_state["ftbl_gemini_status"]="active" if _ping.get("ok") else "failed"
+        if st.session_state.get("ftbl_gemini_status")=="failed":
+            st.warning("⚠️ Gemini no disponible. Análisis con 4 IAs. El flujo continúa normalmente.")
+
+        # ── MODO SIMULADO TOGGLE
+        modo_simulado=st.toggle("🔬 Modo simulado (no descuenta bankroll real)",value=True,key="ftbl_modo_sim")
+        if modo_simulado:
+            st.caption("📋 Modo simulado activo — los tickets se registran pero no afectan bankroll real.")
+
+        tab_f1,tab_f2,tab_f3,tab_f4,tab_f5=st.tabs([
+            "📥 Cargar Partidos",
+            "🎯 Veredicto IA / Tickets",
+            "📒 Registro / Voucher",
+            "📈 Resultados",
+            "📚 Biblioteca"
+        ])
 
         # ────────────────────────────────────────────────────────────────
-        # TAB 1 — CARGAR PARTIDOS (solo texto manual, universal)
+        # TAB 1 — CARGAR PARTIDOS
         # ────────────────────────────────────────────────────────────────
         with tab_f1:
             st.markdown("### 📋 Pegar partidos desde cualquier fuente")
-            st.caption("Funciona con Wplay, Codere, Betplay, ESPN, texto libre, cualquier formato, con o sin cuotas")
+            st.caption("Funciona con Wplay, Codere, Betplay, texto libre — copia crudo, sin limpiar.")
 
             liga_m=st.text_input("🏆 Liga / Competición","Mundial 2026",key="ftbl_liga")
             jornada_m=st.text_input("📅 Fase / Jornada","Fase de Grupos",key="ftbl_jor")
 
-            # ── CORRECCIÓN 1: Usar texto pendiente si viene de Mesa General
+            # Detectar torneo
+            def detectar_torneo(liga_str, jor_str):
+                t=(liga_str+" "+jor_str).lower()
+                if any(x in t for x in ["mundial","world cup","fifa"]): return "Mundial 2026"
+                if "libertadores" in t: return "Copa Libertadores"
+                if "sudamericana" in t: return "Copa Sudamericana"
+                if "premier" in t: return "Premier League"
+                if any(x in t for x in ["laliga","la liga","liga española"]): return "La Liga"
+                if "bundesliga" in t: return "Bundesliga"
+                if "serie a" in t: return "Serie A"
+                if "ligue" in t: return "Ligue 1"
+                return liga_str or "Torneo no identificado"
+
+            torneo_detectado=detectar_torneo(liga_m,jornada_m)
+            # Ajustar pesos: en eliminatorias mundialistas, cuota_valor x2
+            es_mundial="Mundial" in torneo_detectado
+
             texto_pendiente=st.session_state.pop("ftbl_texto_pendiente",None)
             if texto_pendiente:
                 st.success("⚽ Texto de Mesa General redirigido aquí automáticamente")
 
             txt_m=st.text_area(
-                "📋 Pega aquí los partidos",
+                "📋 Pega aquí los partidos (copia crudo de Wplay, Codere, etc.)",
                 height=260,
                 value=texto_pendiente or "",
                 key=f"ftbl_txt_m_{st.session_state.get('ftbl_mc',0)}",
-                placeholder="""Ejemplos de formatos aceptados:
+                placeholder="""Ejemplo — pega exactamente lo que copias de Wplay:
 
-Wplay:
-ALEMANIA vs JAPÓN     1.45  3.80  6.50
-BRASIL vs ARGENTINA   2.10  3.20  3.40
-
-Codere / Betplay:
-1. España - Marruecos  Local 1.35 / Empate 4.20 / Visitante 8.00
-
-Texto libre (sin cuotas):
-- Francia contra Senegal hoy 15:00
-- Portugal vs Marruecos, partido crucial del grupo F"""
+MUNDIAL 2026 - PARTIDOS
+Página ant. 1 / 6 Siguiente página ★ 14:00 15 Jun
+★ Bélgica 1.48
+Empate 4.00
+★ Egipto 7.00 235"""
             )
 
             col_p1,col_p2=st.columns([1,1])
             with col_p1:
-                btn_parsear=st.button("🧠 Parsear con IA",type="primary",use_container_width=True)
+                btn_parsear=st.button("🧠 Parsear partidos",type="primary",use_container_width=True)
             with col_p2:
                 btn_limpiar=st.button("🗑️ Limpiar",use_container_width=True)
 
@@ -1918,20 +1987,19 @@ Texto libre (sin cuotas):
                 txt_val=st.session_state.get(f"ftbl_txt_m_{st.session_state.get('ftbl_mc',0)}",txt_m)
                 if not txt_val: txt_val=txt_m
                 if txt_val and txt_val.strip():
-                    # Limpiar texto siempre primero
                     texto_limpio=limpiar_texto_wplay(txt_val)
                     with st.spinner("🔍 Parseando partidos..."):
                         partidos_preview=[]
 
-                        # ── CAPA 1: Regex (rápido, sin costo, sin red)
+                        # CAPA 1: Regex
                         partidos_preview=parser_regex_wplay(texto_limpio)
                         if partidos_preview:
                             st.success(f"✅ Regex extrajo {len(partidos_preview)} partido(s)")
 
-                        # ── CAPA 2: Gemini REST nativo (solo si regex < 3 partidos)
+                        # CAPA 2: Gemini fallback (solo si regex < 3)
                         if len(partidos_preview)<3:
                             if partidos_preview:
-                                st.info(f"🔄 Regex extrajo solo {len(partidos_preview)} — ampliando con Gemini...")
+                                st.info(f"🔄 Regex extrajo {len(partidos_preview)} — ampliando con Gemini...")
                             else:
                                 st.info("🔄 Regex no extrajo partidos — intentando con Gemini...")
                             pr_parse=(
@@ -1958,40 +2026,56 @@ Texto libre (sin cuotas):
                                     if isinstance(g_partidos,list) and len(g_partidos)>len(partidos_preview):
                                         partidos_preview=g_partidos
                                         st.success(f"✅ Gemini extrajo {len(partidos_preview)} partido(s)")
-                                except:
-                                    pass
-                    if partidos_preview:
-                        st.session_state["ftbl_partidos_preview"]=partidos_preview
-                        st.session_state["ftbl_liga_preview"]=liga_m
-                        st.session_state["ftbl_jor_preview"]=jornada_m
-                    else:
-                        st.error("❌ No se pudieron extraer partidos. Verifica el formato del texto.")
+                                except: pass
 
-            # Preview antes de confirmar
+                        # Validar cuotas
+                        partidos_validos=[]
+                        for p in partidos_preview:
+                            try:
+                                c1=float(p.get("cuota_1",2.0))
+                                cx=float(p.get("cuota_x",3.5))
+                                c2=float(p.get("cuota_2",3.0))
+                                if c1<=0: c1=2.0; p["cuotas_estimadas"]=True
+                                if cx<=0: cx=3.5; p["cuotas_estimadas"]=True
+                                if c2<=0: c2=3.0; p["cuotas_estimadas"]=True
+                                p["cuota_1"]=c1; p["cuota_x"]=cx; p["cuota_2"]=c2
+                                partidos_validos.append(p)
+                            except: pass
+
+                        if partidos_validos:
+                            st.session_state["ftbl_partidos_preview"]=partidos_validos
+                            st.session_state["ftbl_liga_preview"]=liga_m
+                            st.session_state["ftbl_jor_preview"]=jornada_m
+                            st.session_state["ftbl_torneo"]=torneo_detectado
+                        else:
+                            st.error("❌ No se pudieron extraer partidos. Verifica el formato del texto.")
+
+            # Preview
             preview=st.session_state.get("ftbl_partidos_preview",[])
             if preview:
-                st.markdown(f"### ✅ {len(preview)} partidos detectados — Revisar antes de confirmar")
+                st.markdown(f"### ✅ {len(preview)} partidos — Torneo: **{st.session_state.get('ftbl_torneo',torneo_detectado)}**")
+                st.caption("Revisa y ajusta cuotas antes de confirmar")
                 for i,p in enumerate(preview):
                     col_a,col_b,col_c,col_d=st.columns([3,1,1,1])
                     with col_a: st.write(f"**{p.get('local','')}** vs **{p.get('visitante','')}**")
                     with col_b:
-                        new_c1=st.number_input("1",min_value=1.01,value=float(p.get("cuota_1",2.0)),
-                            step=0.01,key=f"pc1_{i}",label_visibility="collapsed")
+                        new_c1=st.number_input("1",min_value=1.01,value=float(p.get("cuota_1",2.0)),step=0.01,key=f"pc1_{i}",label_visibility="collapsed")
                         preview[i]["cuota_1"]=new_c1
                     with col_c:
-                        new_cx=st.number_input("X",min_value=1.01,value=float(p.get("cuota_x",3.2)),
-                            step=0.01,key=f"pcx_{i}",label_visibility="collapsed")
+                        new_cx=st.number_input("X",min_value=1.01,value=float(p.get("cuota_x",3.2)),step=0.01,key=f"pcx_{i}",label_visibility="collapsed")
                         preview[i]["cuota_x"]=new_cx
                     with col_d:
-                        new_c2=st.number_input("2",min_value=1.01,value=float(p.get("cuota_2",3.5)),
-                            step=0.01,key=f"pc2_{i}",label_visibility="collapsed")
+                        new_c2=st.number_input("2",min_value=1.01,value=float(p.get("cuota_2",3.5)),step=0.01,key=f"pc2_{i}",label_visibility="collapsed")
                         preview[i]["cuota_2"]=new_c2
+                    if p.get("cuotas_estimadas"):
+                        st.caption("⚠️ Cuota estimada — verifica antes de apostar")
 
                 col_conf,col_canc=st.columns([1,1])
                 with col_conf:
-                    if st.button("✅ Confirmar y guardar bloque",type="primary",use_container_width=True):
+                    if st.button("✅ Confirmar y activar bloque",type="primary",use_container_width=True):
                         liga_ok=st.session_state.get("ftbl_liga_preview",liga_m)
                         jor_ok=st.session_state.get("ftbl_jor_preview",jornada_m)
+                        tor_ok=st.session_state.get("ftbl_torneo",torneo_detectado)
                         bloque_id=str(uuid.uuid4())
                         supa("futbol_bloques","POST",{
                             "id":bloque_id,"liga":liga_ok,"jornada":jor_ok,
@@ -2009,9 +2093,13 @@ Texto libre (sin cuotas):
                         st.session_state["ftbl_partidos_activos"]=preview
                         st.session_state["ftbl_liga_activa"]=liga_ok
                         st.session_state["ftbl_jor_activa"]=jor_ok
+                        st.session_state["ftbl_torneo_activo"]=tor_ok
                         st.session_state["ftbl_partidos_preview"]=[]
                         st.session_state["ftbl_mc"]=st.session_state.get("ftbl_mc",0)+1
-                        st.success(f"✅ Bloque guardado con {len(preview)} partidos. Ve a 📊 150 Rutas IA")
+                        # Limpiar análisis anteriores
+                        for k in ["ftbl_rutas_150","ftbl_resp_ias","ftbl_sintesis","ftbl_coincidencias"]:
+                            st.session_state.pop(k,None)
+                        st.success(f"✅ {len(preview)} partidos activados. Ve a 🎯 Veredicto IA / Tickets")
                         st.rerun()
                 with col_canc:
                     if st.button("❌ Cancelar",use_container_width=True):
@@ -2031,39 +2119,44 @@ Texto libre (sin cuotas):
                     st.session_state["ftbl_partidos_activos"]=parts
                     st.session_state["ftbl_liga_activa"]=b.get("liga","")
                     st.session_state["ftbl_jor_activa"]=b.get("jornada","")
-                    st.success(f"✅ Bloque activado: {len(parts)} partidos cargados. Ve a 📊 150 Rutas IA")
+                    st.session_state["ftbl_torneo_activo"]=detectar_torneo(b.get("liga",""),b.get("jornada",""))
+                    for k in ["ftbl_rutas_150","ftbl_resp_ias","ftbl_sintesis","ftbl_coincidencias"]:
+                        st.session_state.pop(k,None)
+                    st.success(f"✅ Bloque activado: {len(parts)} partidos. Ve a 🎯 Veredicto IA / Tickets")
                     st.rerun()
 
         # ────────────────────────────────────────────────────────────────
-        # TAB 2 — 150 RUTAS IA CON 5 AGENTES
+        # TAB 2 — VEREDICTO IA / TICKETS
         # ────────────────────────────────────────────────────────────────
         with tab_f2:
+            # Define siempre (evita NameError en re-renders)
+            _ias_nombres=["ChatGPT","Claude","Gemini","Groq","Mistral"]
+            _ico_map={"ChatGPT":"🟢","Claude":"🟤","Gemini":"🔵","Groq":"🟠","Mistral":"🟡"}
+
             partidos_act=st.session_state.get("ftbl_partidos_activos",[])
             liga_act=st.session_state.get("ftbl_liga_activa","")
             jor_act=st.session_state.get("ftbl_jor_activa","")
+            torneo_act=st.session_state.get("ftbl_torneo_activo","")
 
             if not partidos_act:
-                st.info("⬅️ Primero carga un bloque de partidos en la pestaña 📥 Cargar Partidos")
+                st.info("⬅️ Primero carga un bloque de partidos en 📥 Cargar Partidos")
             else:
                 st.markdown(f"### ⚽ {liga_act} — {jor_act}")
-                st.caption(f"{len(partidos_act)} partidos activos")
+                st.caption(f"{len(partidos_act)} partidos | Torneo: {torneo_act}")
 
-                # Mostrar partidos
                 with st.expander("📋 Ver partidos del bloque"):
                     for p in partidos_act:
                         c1,c2,c3=st.columns([4,1,1])
                         c1.write(f"**{p.get('local','')}** vs **{p.get('visitante','')}**")
-                        c2.metric("1",f"{p.get('cuota_1',2.0):.2f}")
-                        c3.metric("X/2",f"{p.get('cuota_x',3.2):.2f}/{p.get('cuota_2',3.5):.2f}")
+                        c2.metric("1",f"{float(p.get('cuota_1',2.0)):.2f}")
+                        c3.metric("X/2",f"{float(p.get('cuota_x',3.2)):.2f}/{float(p.get('cuota_2',3.5)):.2f}")
 
-                # Slider N mejores rutas
                 n_rutas=st.slider("🎯 Mostrar N mejores rutas",min_value=5,max_value=20,value=10,step=1)
 
-                if st.button("🚀 Generar 150 Rutas con 5 IAs",type="primary",use_container_width=True):
-                    with st.spinner("🧠 5 IAs analizando en paralelo (puede tomar 15-30s)..."):
+                if st.button("🚀 Analizar con 5 IAs y generar tickets",type="primary",use_container_width=True):
+                    with st.spinner("🧠 5 IAs analizando (15-30s)..."):
                         import random, math
 
-                        # ── ESTRATEGIAS (9)
                         ESTRATEGIAS=[
                             ("VICTORIA_LOCAL",   {"c1":1.4,"cx":0.3,"c2":0.3}),
                             ("EMPATE_TECHNICO",  {"c1":0.3,"cx":1.4,"c2":0.3}),
@@ -2075,27 +2168,29 @@ Texto libre (sin cuotas):
                             ("MIXTA_EQUILIBRADA",{"c1":0.35,"cx":0.35,"c2":0.3}),
                             ("CONTRA_CORRIENTE", {"c1":0.2,"cx":0.3,"c2":0.5}),
                         ]
+                        # En fase de torneo Mundial: POSICION_TABLA peso=0, CUOTA_VALOR x2
+                        if es_mundial or "Mundial" in torneo_act:
+                            ESTRATEGIAS=[e for e in ESTRATEGIAS if e[0]!="POSICION_TABLA"]
 
                         def generar_prediccion(partido,pesos):
-                            # Probabilidades implícitas desde cuotas
                             c1=float(partido.get("cuota_1",2.0))
                             cx=float(partido.get("cuota_x",3.2))
                             c2=float(partido.get("cuota_2",3.5))
                             p1=1/c1; px=1/cx; p2=1/c2
                             total=p1+px+p2
                             p1/=total; px/=total; p2/=total
-                            # Score ponderado
                             s1=p1*pesos["c1"]; sx=px*pesos["cx"]; s2=p2*pesos["c2"]
                             pred=["1","X","2"][[s1,sx,s2].index(max(s1,sx,s2))]
                             cuota={"1":c1,"X":cx,"2":c2}[pred]
                             prob={"1":p1,"X":px,"2":p2}[pred]
-                            ev=(prob*cuota)-1
+                            # EV = probabilidad_implícita * cuota - 1
+                            ev=round((prob*cuota)-1,4)
                             return pred,cuota,ev
 
-                        # ── GENERAR 150 RUTAS (50×10match + 50×15match + 50×20match si hay partidos)
                         n_p=len(partidos_act)
                         rutas_raw=[]
                         configs=[(min(10,n_p),50),(min(15,n_p),50),(min(20,n_p),50)]
+                        seen_hashes=set()
                         for n_sel,n_gen in configs:
                             for _ in range(n_gen):
                                 sel=random.sample(partidos_act,min(n_sel,n_p))
@@ -2103,51 +2198,51 @@ Texto libre (sin cuotas):
                                 picks=[]
                                 cuota_total=1.0
                                 ev_total=0.0
+                                n_empates=0
                                 for p in sel:
                                     pred,cuota,ev=generar_prediccion(p,pesos)
+                                    if pred=="X": n_empates+=1
                                     picks.append({"local":p.get("local",""),"visitante":p.get("visitante",""),
                                                   "pred":pred,"cuota":cuota,"ev":ev})
                                     cuota_total*=cuota
                                     ev_total+=ev
+                                # Límite empates por longitud de ruta
+                                max_emp={10:4,15:4,20:5}.get(len(picks),4)
+                                if n_empates>max_emp: continue
+                                # Evitar rutas idénticas
+                                ruta_hash=hashlib.md5(str(sorted([(pk["local"],pk["pred"]) for pk in picks])).encode()).hexdigest()
+                                if ruta_hash in seen_hashes: continue
+                                seen_hashes.add(ruta_hash)
                                 rutas_raw.append({
                                     "estrategia":est_nom,"picks":picks,
                                     "cuota_total":round(cuota_total,2),
                                     "ev_total":round(ev_total/len(picks),4) if picks else 0,
-                                    "n_picks":len(picks)
+                                    "n_picks":len(picks),"n_empates":n_empates
                                 })
 
-                        # ── CONTROL EXPOSICIÓN 65%
-                        # Contar cuántas veces aparece (partido, pred) en todas las rutas
-                        total_rutas=len(rutas_raw)
+                        # Control exposición 65%
+                        total_rutas=len(rutas_raw) or 1
                         match_counts={}
                         for r in rutas_raw:
                             for pk in r["picks"]:
                                 k=f"{pk['local']}|{pk['pred']}"
                                 match_counts[k]=match_counts.get(k,0)+1
-                        # Filtrar rutas que usen picks sobreexpuestos
-                        rutas_ok=[]
-                        for r in rutas_raw:
-                            sobreex=any(
-                                match_counts.get(f"{pk['local']}|{pk['pred']}",0)/total_rutas>0.65
-                                for pk in r["picks"]
-                            )
-                            if not sobreex:
-                                rutas_ok.append(r)
-
-                        # Si muy pocas, relajar el filtro
+                        rutas_ok=[r for r in rutas_raw if not any(
+                            match_counts.get(f"{pk['local']}|{pk['pred']}",0)/total_rutas>0.65
+                            for pk in r["picks"]
+                        )]
                         if len(rutas_ok)<30: rutas_ok=rutas_raw
 
-                        # ── SCORE FINAL Y ORDENAR
                         for r in rutas_ok:
                             r["score_final"]=round(r["ev_total"]*0.5+math.log(max(r["cuota_total"],1.01))*0.3+r["n_picks"]*0.02,4)
                         rutas_ok.sort(key=lambda x:x["score_final"],reverse=True)
                         rutas_150=rutas_ok[:150]
 
-                        # ── ANÁLISIS 5 IAs EN PARALELO (top rutas)
+                        # 5 IAs en paralelo
                         top_n=min(5,len(rutas_150))
                         top_rutas=rutas_150[:top_n]
                         partidos_str="\n".join([
-                            f"{p.get('local','')} vs {p.get('visitante','')} | 1:{p.get('cuota_1',2.0):.2f} X:{p.get('cuota_x',3.2):.2f} 2:{p.get('cuota_2',3.5):.2f}"
+                            f"{p.get('local','')} vs {p.get('visitante','')} | 1:{float(p.get('cuota_1',2.0)):.2f} X:{float(p.get('cuota_x',3.2)):.2f} 2:{float(p.get('cuota_2',3.5)):.2f}"
                             for p in partidos_act
                         ])
                         rutas_str="\n".join([
@@ -2156,70 +2251,34 @@ Texto libre (sin cuotas):
                             for i,r in enumerate(top_rutas)
                         ])
 
-                        # ── CORRECCIÓN 4: Prompts deportivos puros (sin CONTEXTO JandrexT)
                         BASE_DEPORTE=(
-                            "MODO ANÁLISIS DEPORTIVO PURO — Mundial 2026.\n"
-                            "Ignora cualquier contexto previo no deportivo. "
-                            "Eres un analista experto en apuestas deportivas 1X2.\n"
+                            f"Eres un analista experto en apuestas deportivas 1X2.\n"
+                            f"Torneo: {torneo_act}. Analiza SOLO sobre fútbol y apuestas.\n"
+                            "No menciones contextos empresariales ni temas ajenos al deporte.\n"
                         )
                         roles_futbol={
-                            "ChatGPT":(
-                                BASE_DEPORTE+
-                                "ROL: Generador de predicciones y combinaciones.\n"
-                                "Propón predicciones 1/X/2 por partido con justificación breve. "
-                                "Identifica las mejores combinaciones para parlay con mayor valor esperado. "
-                                "Recomienda las 3 rutas con mejor balance cuota/confianza."
-                            ),
-                            "Claude":(
-                                BASE_DEPORTE+
-                                "ROL: Auditor de riesgos y partidos trampa.\n"
-                                "Detecta partidos trampa y riesgos ocultos en las rutas. "
-                                "¿Cuáles picks evitarías en un parlay y por qué? "
-                                "Indica riesgo por partido: bajo/medio/alto. "
-                                "Señala qué pick podría arruinar cada combinación."
-                            ),
-                            "Gemini":(
-                                BASE_DEPORTE+
-                                "ROL: Contextualizador Mundial 2026.\n"
-                                "Aporta contexto del Mundial 2026: fase del torneo, "
-                                "historial H2H conocido, motivaciones de cada selección, "
-                                "favoritismo real más allá de las cuotas. "
-                                "Ordena las rutas por confianza contextual."
-                            ),
-                            "Groq":(
-                                BASE_DEPORTE+
-                                "ROL: Análisis rápido y rankings.\n"
-                                "Identifica los 5 partidos más predecibles de la selección. "
-                                "Una línea por partido: equipo + 1/X/2 + razón. "
-                                "Califica cada ruta de 1-10 según cuota:riesgo. Sé conciso."
-                            ),
-                            "Mistral":(
-                                BASE_DEPORTE+
-                                "ROL: Perspectiva alternativa y valor oculto.\n"
-                                "¿Dónde están las cuotas subvaloradas? "
-                                "¿Qué empates son estructuralmente probables? "
-                                "¿Algún visitante con valor real? "
-                                "Señala qué rutas van CONTRA la tendencia obvia con mejor EV."
-                            )
+                            "ChatGPT":(BASE_DEPORTE+"ROL: Generador de predicciones.\nPropón predicción 1/X/2 por partido con justificación breve. Identifica las 3 mejores combinaciones para parlay. Di 1, X o 2 por cada partido."),
+                            "Claude":(BASE_DEPORTE+"ROL: Auditor de riesgos.\nDetecta partidos trampa y riesgos ocultos. Indica riesgo bajo/medio/alto por partido. ¿Cuáles evitarías en un parlay?"),
+                            "Gemini":(BASE_DEPORTE+f"ROL: Contextualizador {torneo_act}.\nAporta contexto: H2H reciente, fase del torneo, motivación, jugadores clave, factores externos. Si no tienes datos: indica [SIN DATOS]."),
+                            "Groq":(BASE_DEPORTE+"ROL: Análisis rápido.\nLos 5 partidos más predecibles. Una línea: equipo + 1/X/2 + razón. Sé muy conciso."),
+                            "Mistral":(BASE_DEPORTE+"ROL: Perspectiva alternativa.\n¿Cuotas subvaloradas? ¿Empates estructurales? ¿Visitante con valor real? ¿Dónde se equivoca el mercado?")
                         }
 
                         def _run_ia_futbol(ia_nombre):
-                            rol=roles_futbol.get(ia_nombre,"")
+                            rol_ia=roles_futbol.get(ia_nombre,"")
                             prompt_ia=(
-                                f"{rol}\n\n"
+                                f"{rol_ia}\n\n"
                                 f"PARTIDOS ({liga_act} — {jor_act}):\n{partidos_str}\n\n"
-                                f"TOP {top_n} RUTAS GENERADAS:\n{rutas_str}\n\n"
-                                "Analiza y responde en máximo 300 palabras. "
-                                "No menciones contextos empresariales, solo análisis deportivo."
+                                f"TOP {top_n} RUTAS:\n{rutas_str}\n\n"
+                                "Responde en máximo 300 palabras. Solo análisis deportivo."
                             )
                             try:
                                 if ia_nombre=="ChatGPT": r=openai_fn(prompt_ia)
                                 elif ia_nombre=="Claude": r=claude_fn(prompt_ia)
                                 elif ia_nombre=="Gemini":
-                                    # gemini_deporte_fn: REST nativo SIN CONTEXTO JandrexT
                                     r=gemini_deporte_fn(prompt_ia)
                                     if not r.get("ok"):
-                                        r={"ia":"Gemini","icono":"🔵","respuesta":"Gemini no disponible en este análisis.","ok":False,"tiempo":0}
+                                        r={"ia":"Gemini","icono":"🔵","respuesta":"Gemini no disponible.","ok":False,"tiempo":0}
                                 elif ia_nombre=="Groq": r=groq_fn(prompt_ia)
                                 elif ia_nombre=="Mistral": r=mistral_fn(prompt_ia)
                                 else: r={"ia":ia_nombre,"respuesta":"No disponible","ok":False,"tiempo":0}
@@ -2228,168 +2287,327 @@ Texto libre (sin cuotas):
                             r["ia"]=ia_nombre
                             return r
 
-                        ias_futbol=["ChatGPT","Claude","Gemini","Groq","Mistral"]
                         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
-                            futs={ex.submit(_run_ia_futbol,ia):ia for ia in ias_futbol}
+                            futs={ex.submit(_run_ia_futbol,ia):ia for ia in _ias_nombres}
                             resp_futbol={ia:f.result() for f,ia in [(f,futs[f]) for f in concurrent.futures.as_completed(futs)]}
 
-                        # ── CORRECCIÓN 5: Mostrar aviso si Gemini falló
-                        ias_fallidas=[ia for ia in ias_futbol if not resp_futbol[ia].get("ok")]
-                        ias_ok=[ia for ia in ias_futbol if resp_futbol[ia].get("ok")]
-                        if "Gemini" in ias_fallidas:
-                            n_ok=len(ias_ok)
-                            st.warning(f"⚠️ Gemini no disponible. Análisis con {n_ok} IAs: {', '.join(ias_ok)}")
+                        ias_ok_list=[ia for ia in _ias_nombres if resp_futbol[ia].get("ok")]
+                        ias_fail_list=[ia for ia in _ias_nombres if not resp_futbol[ia].get("ok")]
+                        n_ias_ok=len(ias_ok_list)
 
-                        # ── SÍNTESIS CONSENSO (Claude)
+                        # Síntesis consenso con Claude
                         resp_texts="\n\n".join([
                             f"**{ia}**: {resp_futbol[ia].get('respuesta','')[:400]}"
-                            for ia in ias_futbol
+                            for ia in ias_ok_list
                         ])
                         sint_fut_prompt=(
-                            "MODO: ÁRBITRO DE ANÁLISIS DEPORTIVO PURO — Football Lab 1X2\n"
-                            f"Competición: {liga_act} | Jornada: {jor_act}\n\n"
-                            f"{len(ias_ok)} IAs analizaron las top {top_n} rutas. Sus análisis:\n{resp_texts}\n\n"
-                            "Sintetiza exclusivamente sobre apuestas deportivas:\n"
-                            "1. **RUTA RECOMENDADA** (número y estrategia con mayor consenso)\n"
-                            "2. **CONFIANZA** (🟢 Alta ≥4 IAs / 🟡 Media 3 / 🔴 Baja <3) con razón breve\n"
-                            "3. **PICKS MÁS SEGUROS** — predicciones en que coincide la mayoría\n"
-                            "4. **RIESGO OCULTO** — pick más peligroso del parlay y por qué\n\n"
-                            "Máximo 250 palabras. Solo análisis deportivo. Sin mencionar empresas ni contextos ajenos."
+                            f"Eres árbitro de análisis deportivo puro — {torneo_act}.\n"
+                            f"{n_ias_ok}/5 IAs disponibles analizaron {top_n} rutas.\n\n"
+                            f"ANÁLISIS:\n{resp_texts}\n\n"
+                            "Sintetiza SOLO sobre apuestas deportivas:\n"
+                            "1. **RUTA RECOMENDADA** (número + estrategia con mayor consenso)\n"
+                            "2. **CONFIANZA** (🟢 Alta ≥4 IAs / 🟡 Media 3 / 🔴 Baja <3) + razón\n"
+                            "3. **PICKS MÁS SEGUROS** — donde coincide la mayoría\n"
+                            "4. **RIESGO OCULTO** — pick más peligroso y por qué\n\n"
+                            "Máximo 250 palabras. Sin mencionar empresas ni contextos ajenos."
                         )
-                        # Síntesis con Claude usando system prompt deportivo (no corporativo)
                         sint_fut=claude_fn(sint_fut_prompt)
 
-                        # ── MAPA DE COINCIDENCIAS (qué IAs coinciden en cada pick)
-                        # Para las top rutas, detectar en qué picks el texto de cada IA menciona al equipo
-                        coincidencias={}
-                        for i,r in enumerate(top_rutas):
-                            r_key=f"ruta_{i+1}"
-                            coincidencias[r_key]={}
-                            for pk in r["picks"]:
-                                equipo=pk["local"]
-                                ias_que_mencionan=[]
-                                for ia in ias_futbol:
-                                    txt_ia=resp_futbol[ia].get("respuesta","").lower()
-                                    if equipo.lower()[:5] in txt_ia:
-                                        ias_que_mencionan.append(ia)
-                                coincidencias[r_key][equipo]=ias_que_mencionan
+                        # Veredicto por partido (consenso + riesgo)
+                        veredicto_partidos={}
+                        for p in partidos_act:
+                            local=p.get("local","")
+                            visitante=p.get("visitante","")
+                            c1=float(p.get("cuota_1",2.0))
+                            cx=float(p.get("cuota_x",3.2))
+                            c2=float(p.get("cuota_2",3.5))
+                            # Probabilidad implícita normalizada
+                            pr1=1/c1; prx=1/cx; pr2=1/c2
+                            tot=pr1+prx+pr2; pr1/=tot; prx/=tot; pr2/=tot
+                            # Pick de mayor probabilidad
+                            picks_prob={"1":(pr1,c1),"X":(prx,cx),"2":(pr2,c2)}
+                            best_pred=max(picks_prob,key=lambda k:picks_prob[k][0])
+                            best_cuota=picks_prob[best_pred][1]
+                            best_prob=picks_prob[best_pred][0]
+                            ev_partido=round((best_prob*best_cuota)-1,4)
+                            # Contar IAs que mencionan al local favorably
+                            n_ias_favor=0
+                            for ia in ias_ok_list:
+                                txt=resp_futbol[ia].get("respuesta","").lower()
+                                if local.lower()[:5] in txt or visitante.lower()[:5] in txt:
+                                    n_ias_favor+=1
+                            # Confianza (EV negativo NUNCA es Alta)
+                            if ev_partido<0:
+                                conf="🔴 Bajo valor"
+                                apta_para="No recomendada"
+                            elif n_ias_favor>=4 and ev_partido>=0.10:
+                                conf="🟢 Alta confianza"
+                                apta_para="Ticket Premium / Conservador"
+                            elif n_ias_favor>=3 and ev_partido>=0.0:
+                                conf="🟡 Media confianza"
+                                apta_para="Ticket Balanceado"
+                            else:
+                                conf="🔴 Baja confianza"
+                                apta_para="Evitar o Ticket Especiales"
+                            # Riesgo por cuota
+                            if best_cuota<1.5: riesgo="Bajo"
+                            elif best_cuota<2.5: riesgo="Medio"
+                            else: riesgo="Alto"
+                            pred_txt={"1":f"{local} gana","X":"Empate","2":f"{visitante} gana"}.get(best_pred,best_pred)
+                            veredicto_partidos[f"{local}|{visitante}"]={
+                                "pred":best_pred,"pred_txt":pred_txt,
+                                "cuota":best_cuota,"ev":ev_partido,
+                                "n_ias":n_ias_favor,"conf":conf,"riesgo":riesgo,"apta_para":apta_para
+                            }
 
-                        # Guardar en session state
+                        # Generar 3 tickets diferenciados
+                        picks_ordenados=[(k,v) for k,v in veredicto_partidos.items() if v["ev"]>=0]
+                        picks_ordenados.sort(key=lambda x:-x[1]["n_ias"])
+
+                        def _ticket_txt(nombre,picks_sel,monto,ligat,jorl):
+                            lines=[f"🎟️ {nombre} — {ligat}",f"📅 {jorl}","━"*24]
+                            cuota_t=1.0
+                            for k,v in picks_sel:
+                                local,visitante=k.split("|")
+                                lines.append(f"⚽ {local} vs {visitante}")
+                                lines.append(f"   → {v['pred_txt']} ({v['pred']}) @ {v['cuota']:.2f}")
+                                lines.append(f"   IAs: {v['n_ias']}/5 | {v['conf']} | Riesgo: {v['riesgo']}")
+                                cuota_t*=v["cuota"]
+                            lines+=["━"*24,f"💰 Apuesta ${monto:,.0f} → Retorno: ${monto*cuota_t:,.0f}",
+                                    f"📊 Cuota total: {cuota_t:.2f}x",f"📱 jandrext-ia.streamlit.app | {n_ias_ok}/5 IAs"]
+                            return "\n".join(lines)
+
+                        ticket_conserv=picks_ordenados[:min(4,len(picks_ordenados))]
+                        ticket_balanc=picks_ordenados[:min(6,len(picks_ordenados))]
+                        ticket_prem=[(k,v) for k,v in picks_ordenados if v["conf"]=="🟢 Alta confianza"][:5]
+
+                        gemini_ctx=resp_futbol.get("Gemini",{}).get("respuesta","Sin contexto Gemini")[:300]
+
+                        # Guardar todo
                         st.session_state["ftbl_rutas_150"]=rutas_150
                         st.session_state["ftbl_resp_ias"]=resp_futbol
                         st.session_state["ftbl_sintesis"]=sint_fut
-                        st.session_state["ftbl_coincidencias"]=coincidencias
-                        st.session_state["ftbl_top_n"]=top_n
+                        st.session_state["ftbl_veredicto"]=veredicto_partidos
+                        st.session_state["ftbl_tickets"]={
+                            "conservador":ticket_conserv,
+                            "balanceado":ticket_balanc,
+                            "premium":ticket_prem,
+                            "gemini_ctx":gemini_ctx
+                        }
+                        st.session_state["ftbl_ias_ok"]=ias_ok_list
+                        st.session_state["ftbl_ias_fail"]=ias_fail_list
                         st.rerun()
 
-                # ── MOSTRAR RESULTADOS
+                # ── MOSTRAR RESULTADOS (después del rerun)
                 rutas_150=st.session_state.get("ftbl_rutas_150",[])
-                sint_fut=st.session_state.get("ftbl_sintesis",{})
                 resp_futbol=st.session_state.get("ftbl_resp_ias",{})
-                coincidencias_g=st.session_state.get("ftbl_coincidencias",{})
+                sint_fut=st.session_state.get("ftbl_sintesis",{})
+                veredicto_partidos=st.session_state.get("ftbl_veredicto",{})
+                tickets_data=st.session_state.get("ftbl_tickets",{})
+                ias_ok_list=st.session_state.get("ftbl_ias_ok",[])
+                ias_fail_list=st.session_state.get("ftbl_ias_fail",[])
+                n_ias_ok=len(ias_ok_list)
 
                 if rutas_150:
-                    # Síntesis del Consejo
-                    st.markdown("### 🧠 Veredicto del Consejo de 5 IAs")
-                    sint_txt=sint_fut.get("respuesta","") if isinstance(sint_fut,dict) else str(sint_fut)
-                    if "Verde" in sint_txt or "verde" in sint_txt:
-                        st.success(sint_txt)
-                    elif "Amarillo" in sint_txt or "amarillo" in sint_txt:
-                        st.warning(sint_txt)
-                    elif "Rojo" in sint_txt or "rojo" in sint_txt:
-                        st.error(sint_txt)
-                    else:
-                        st.info(sint_txt)
-
-                    # Estado rápido de las 5 IAs
-                    st.markdown("**Estado de los 5 agentes:**")
-                    ico_map={"ChatGPT":"🟢","Claude":"🟤","Gemini":"🔵","Groq":"🟡","Mistral":"🟣"}
+                    # Estado IAs
+                    st.markdown(f"**{n_ias_ok}/5 IAs disponibles:** {', '.join(ias_ok_list)}")
+                    if ias_fail_list:
+                        st.caption(f"❌ No disponibles: {', '.join(ias_fail_list)}")
                     cols5=st.columns(5)
-                    for i,ia in enumerate(["ChatGPT","Claude","Gemini","Groq","Mistral"]):
+                    for i,ia in enumerate(_ias_nombres):
                         r=resp_futbol.get(ia,{})
                         with cols5[i]:
-                            st.markdown(f"**{ico_map.get(ia,'⚪')} {ia}**")
-                            st.caption(f"{'✅' if r.get('ok') else '❌'} {r.get('tiempo',0)}s")
+                            st.markdown(f"**{_ico_map.get(ia,'⚪')} {ia}**")
+                            st.caption(f"{'✅' if r.get('ok') else '❌'} {r.get('tiempo',0):.1f}s")
 
                     st.markdown("---")
 
-                    # ── TOP N RUTAS CON SLIDER
-                    top_show=rutas_150[:n_rutas]
-                    st.markdown(f"### 🏆 Top {n_rutas} Rutas (de 150 generadas)")
+                    # ── VEREDICTO POR PARTIDO
+                    st.markdown("### 🎯 Veredicto por partido")
+                    for k,v in veredicto_partidos.items():
+                        local,visitante=k.split("|")
+                        with st.container():
+                            st.markdown(
+                                f"**{local} vs {visitante}** @{v['cuota']:.2f}\n\n"
+                                f"→ **Pick:** {v['pred_txt']} | "
+                                f"**Consenso:** {v['n_ias']}/{n_ias_ok} IAs | "
+                                f"**{v['conf']}** | **Riesgo:** {v['riesgo']}\n\n"
+                                f"→ *Apta para: {v['apta_para']}*"
+                            )
+                            st.markdown("---")
 
+                    # ── SÍNTESIS CONSEJO
+                    st.markdown("### 🧠 Síntesis del Consejo")
+                    sint_txt=sint_fut.get("respuesta","") if isinstance(sint_fut,dict) else str(sint_fut)
+                    st.info(sint_txt if sint_txt else "Síntesis no disponible.")
+
+                    # Análisis individuales
+                    with st.expander("🔬 Ver análisis completos de cada IA"):
+                        for ia in _ias_nombres:
+                            res=resp_futbol.get(ia,{})
+                            ok_txt="✅" if res.get("ok") else "❌"
+                            with st.expander(f"{_ico_map.get(ia,'🤖')} {ia} {ok_txt} ({res.get('tiempo',0):.1f}s)"):
+                                st.write(res.get("respuesta","Sin respuesta"))
+
+                    st.markdown("---")
+
+                    # ── 3 TICKETS DIFERENCIADOS
+                    st.markdown("### 🎟️ Tickets sugeridos")
+                    gemini_ctx=tickets_data.get("gemini_ctx","")
+
+                    tcol1,tcol2,tcol3=st.columns(3)
+
+                    with tcol1:
+                        st.markdown("**🟢 Conservador ($1.000-$2.000)**")
+                        picks_c=tickets_data.get("conservador",[])
+                        if picks_c:
+                            txt_c=_ticket_txt("TICKET CONSERVADOR",picks_c,1000,liga_act,jor_act)
+                            if gemini_ctx: txt_c+=f"\n\n📍 Contexto Gemini:\n{gemini_ctx}"
+                            st.code(txt_c,language=None)
+                        else:
+                            st.caption("Sin picks con EV positivo suficiente.")
+
+                    with tcol2:
+                        st.markdown("**🟡 Balanceado ($1.000)**")
+                        picks_b=tickets_data.get("balanceado",[])
+                        if picks_b:
+                            txt_b=_ticket_txt("TICKET BALANCEADO",picks_b,1000,liga_act,jor_act)
+                            if gemini_ctx: txt_b+=f"\n\n📍 Contexto Gemini:\n{gemini_ctx}"
+                            st.code(txt_b,language=None)
+                        else:
+                            st.caption("Sin picks disponibles.")
+
+                    with tcol3:
+                        st.markdown("**🔴 Premium ($5.000) — solo ≥4 IAs**")
+                        picks_p=tickets_data.get("premium",[])
+                        if picks_p:
+                            txt_p=_ticket_txt("TICKET PREMIUM",picks_p,5000,liga_act,jor_act)
+                            if gemini_ctx: txt_p+=f"\n\n📍 Contexto Gemini:\n{gemini_ctx}"
+                            st.code(txt_p,language=None)
+                        else:
+                            st.caption("No hay picks con Alta confianza 🟢 esta vez.")
+
+                    st.caption("☝️ Selecciona el texto del ticket y copia (Ctrl+A / Cmd+A dentro del cuadro)")
+
+                    st.markdown("---")
+
+                    # ── TOP N RUTAS
+                    top_show=rutas_150[:n_rutas]
+                    st.markdown(f"### 🏆 Top {n_rutas} Rutas (de {len(rutas_150)} generadas)")
                     for idx,r in enumerate(top_show):
-                        nivel=idx+1
-                        # Semáforo por EV
                         if r["ev_total"]>0.05: color="🟢"
                         elif r["ev_total"]>0: color="🟡"
                         else: color="🔴"
-
-                        # IAs que mencionaron esta ruta
-                        r_key=f"ruta_{idx+1}"
+                        # Contar IAs en consenso
                         n_ias_acuerdo=0
-                        for ia in ["ChatGPT","Claude","Gemini","Groq","Mistral"]:
+                        for ia in ias_ok_list:
                             txt=resp_futbol.get(ia,{}).get("respuesta","").lower()
                             if str(idx+1) in txt or r["estrategia"].lower()[:6] in txt:
                                 n_ias_acuerdo+=1
-                        if n_ias_acuerdo>=4: consenso="🟢 Alta confianza"
-                        elif n_ias_acuerdo>=3: consenso="🟡 Confianza media"
-                        else: consenso="🔴 Baja confianza"
+                        # EV negativo NUNCA es Alta confianza
+                        if r["ev_total"]<0:
+                            consenso_ruta="🔴 Bajo valor esperado"
+                        elif n_ias_acuerdo>=4:
+                            consenso_ruta="🟢 Alta confianza"
+                        elif n_ias_acuerdo>=3:
+                            consenso_ruta="🟡 Confianza media"
+                        else:
+                            consenso_ruta="🔴 Baja confianza"
 
                         with st.expander(
-                            f"{color} Ruta #{nivel} | {r['estrategia']} | {r['n_picks']} picks | "
-                            f"Cuota: {r['cuota_total']:.2f} | EV: {r['ev_total']:.3f} | {consenso}",
+                            f"{color} #{idx+1} | {r['estrategia']} | {r['n_picks']} picks | "
+                            f"Cuota: {r['cuota_total']:.2f} | EV: {r['ev_total']:.3f} | {consenso_ruta}",
                             expanded=(idx==0)
                         ):
-                            # Tabla de picks
                             picks_md="| Partido | Pred | Cuota | EV |\n|---|---|---|---|\n"
                             for pk in r["picks"]:
                                 picks_md+=f"| {pk['local']} vs {pk['visitante']} | **{pk['pred']}** | {pk['cuota']:.2f} | {pk['ev']:+.3f} |\n"
                             st.markdown(picks_md)
-                            st.caption(f"IAs en consenso: {n_ias_acuerdo}/5 | {consenso}")
+                            st.caption(f"IAs en consenso: {n_ias_acuerdo}/{n_ias_ok} | {consenso_ruta}")
 
-                            # TICKET COPIABLE PARA WPLAY
-                            if idx==0:
-                                st.markdown("#### 🎟️ Ticket Parlay para Wplay")
                             ticket_lines=[
-                                f"🎟️ PARLAY JANDREXT — {liga_act}",
-                                f"📅 {jor_act} | Estrategia: {r['estrategia']}",
-                                f"🎯 Cuota total: {r['cuota_total']:.2f}x | EV: {r['ev_total']:+.3f}",
-                                "━━━━━━━━━━━━━━━━━━━━━━━",
+                                f"🎟️ PARLAY — {liga_act}",f"📅 {jor_act} | {r['estrategia']}",
+                                f"🎯 Cuota: {r['cuota_total']:.2f}x | EV: {r['ev_total']:+.3f}","━"*24,
                             ]
                             for pk in r["picks"]:
-                                pred_txt={"1":"Local","X":"Empate","2":"Visitante"}.get(pk["pred"],pk["pred"])
-                                ticket_lines.append(f"⚽ {pk['local']} vs {pk['visitante']}")
-                                ticket_lines.append(f"   → {pred_txt} ({pk['pred']}) @ {pk['cuota']:.2f}")
-                            ticket_lines+=[
-                                "━━━━━━━━━━━━━━━━━━━━━━━",
-                                f"💰 Apuesta $1.000 → Retorno: ${1000*r['cuota_total']:,.0f}",
-                                f"🧠 Football Lab JandrexT | {consenso}",
-                                f"📱 jandrext-ia.streamlit.app"
-                            ]
-                            ticket_txt="\n".join(ticket_lines)
-                            st.code(ticket_txt,language=None)
-                            st.caption("☝️ Selecciona todo el texto y copia (Ctrl+A / Cmd+A)")
+                                pred_txt={"1":"Local gana","X":"Empate","2":"Visitante gana"}.get(pk["pred"],pk["pred"])
+                                ticket_lines+=[f"⚽ {pk['local']} vs {pk['visitante']}",f"   → {pred_txt} ({pk['pred']}) @ {pk['cuota']:.2f}"]
+                            ticket_lines+=["━"*24,f"💰 $1.000 → ${1000*r['cuota_total']:,.0f}",
+                                           f"🧠 Football Lab | {consenso_ruta}","📱 jandrext-ia.streamlit.app"]
+                            st.code("\n".join(ticket_lines),language=None)
 
-                    # ── Análisis completos de cada IA
-                    with st.expander("🔬 Ver análisis completos de cada IA"):
-                        ico_map2={"ChatGPT":"🟢","Claude":"🟤","Gemini":"🔵","Groq":"🟡","Mistral":"🟣"}
-                        for ia in ias_futbol:
-                            res=resp_futbol.get(ia,{})
-                            ok_txt="✅" if res.get("ok") else "❌"
-                            t_ia=res.get("tiempo",0)
-                            with st.expander(f"{ico_map2.get(ia,'🤖')} {ia} {ok_txt} ({t_ia:.1f}s)"):
-                                st.write(res.get("respuesta","Sin respuesta"))
+        # ────────────────────────────────────────────────────────────────
+        # TAB 3 — REGISTRO / VOUCHER
+        # ────────────────────────────────────────────────────────────────
+        with tab_f3:
+            st.markdown("### 📒 Registro de Apuesta / Voucher")
+            modo_sim_val=st.session_state.get("ftbl_modo_sim",True)
+            st.info(f"Modo actual: {'🔬 Simulado' if modo_sim_val else '💰 Real'}")
 
-                    # ── Síntesis final
-                    st.markdown("---")
-                    st.markdown("### 🎯 Síntesis del Consejo IA")
-                    sint_ok=sint_fut.get("ok") if isinstance(sint_fut,dict) else False
-                    if sint_ok:
-                        st.markdown(sint_fut.get("respuesta",""))
+            tickets_data_r=st.session_state.get("ftbl_tickets",{})
+            liga_r=st.session_state.get("ftbl_liga_activa","")
+            jor_r=st.session_state.get("ftbl_jor_activa","")
+            tor_r=st.session_state.get("ftbl_torneo_activo","")
+
+            if not tickets_data_r:
+                st.info("⬅️ Primero genera el análisis en 🎯 Veredicto IA / Tickets")
+            else:
+                tipo_ticket=st.selectbox("Tipo de ticket a registrar",
+                    ["Conservador","Balanceado","Premium","Personalizado"])
+                casa_apuestas=st.selectbox("Casa de apuestas",["Wplay","Codere","Betplay","Otra"])
+                stake=st.number_input("Monto apostado ($)",min_value=0,value=1000,step=500)
+                voucher_txt=st.text_area("📋 Pega aquí el comprobante (opcional)",height=120,
+                    placeholder="Copia el número de ticket o código de confirmación de la casa de apuestas...")
+
+                if st.button("💾 Registrar apuesta",type="primary",use_container_width=True):
+                    ticket_id=str(uuid.uuid4())[:8].upper()
+                    n_ias_r=len(st.session_state.get("ftbl_ias_ok",[]))
+                    supa("football_bets","POST",{
+                        "user_id":u["id"],
+                        "ticket_id":ticket_id,
+                        "casa_apuestas":casa_apuestas,
+                        "torneo":tor_r,
+                        "tipo_ticket":tipo_ticket.lower(),
+                        "stake":stake,
+                        "status":"simulated" if modo_sim_val else "placed",
+                        "voucher_text":voucher_txt,
+                        "consenso_ias":n_ias_r,
+                        "simulado":modo_sim_val,
+                        "ai_ticket_json":json.dumps(tickets_data_r.get(tipo_ticket.lower(),{}),ensure_ascii=False)[:2000]
+                    })
+                    if modo_sim_val:
+                        st.success(f"✅ Ticket #{ticket_id} registrado en modo SIMULADO. No afecta bankroll.")
                     else:
-                        mejor=max(resp_futbol.values(),key=lambda x:len(x.get("respuesta","")) if x.get("ok") else 0,default={})
-                        if mejor.get("ok"):
-                            st.info(f"Síntesis via {mejor['ia']}:")
-                            st.markdown(mejor.get("respuesta",""))
-                        else:
-                            st.info("Síntesis no disponible. Revisa los análisis individuales arriba.")
+                        st.success(f"✅ Ticket #{ticket_id} registrado en modo REAL. Revisa tu saldo.")
+
+                # Apuestas registradas
+                st.markdown("---")
+                st.markdown("### 📋 Apuestas registradas")
+                bets=supa("football_bets",filtro=f"?user_id=eq.{u['id']}&order=created_at.desc&limit=10") or []
+                if not isinstance(bets,list): bets=[]
+                for bet in [x for x in bets if isinstance(x,dict)]:
+                    modo_b="🔬" if bet.get("simulado") else "💰"
+                    st.markdown(
+                        f"{modo_b} **#{bet.get('ticket_id','')}** | {bet.get('tipo_ticket','')} | "
+                        f"{bet.get('casa_apuestas','')} | ${bet.get('stake',0):,.0f} | "
+                        f"Estado: `{bet.get('status','')}`"
+                    )
+
+        # ────────────────────────────────────────────────────────────────
+        # TAB 4 — RESULTADOS
+        # ────────────────────────────────────────────────────────────────
+        with tab_f4:
+            st.markdown("### 📈 Resultados y Accuracy")
+            st.info("📅 Próximamente: carga de resultados reales y cálculo de ROI por estrategia.")
+
+        # ────────────────────────────────────────────────────────────────
+        # TAB 5 — BIBLIOTECA
+        # ────────────────────────────────────────────────────────────────
+        with tab_f5:
+            st.markdown("### 📚 Biblioteca de Bloques")
+            bloques_bib=supa("futbol_bloques",filtro="?order=creado_en.desc") or []
+            if not isinstance(bloques_bib,list): bloques_bib=[]
+            if not bloques_bib:
+                st.info("Aún no hay bloques guardados.")
+            for b in [x for x in bloques_bib[:20] if isinstance(x,dict)]:
+                st.markdown(f"⚽ **{b.get('liga','')}** — {b.get('jornada','')} | {b.get('n_partidos',0)} partidos")
