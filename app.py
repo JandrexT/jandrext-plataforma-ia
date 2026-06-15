@@ -1023,16 +1023,16 @@ elif sec=="chat":
                     if st.button("📁",key=f"mp_{c['id']}",help="Mover a proyecto"):
                         st.session_state[f"mover_{c['id']}"]=True
                 with cd:
-                with st.popover("⋮",use_container_width=True):
-                    if st.button("✏️ Renombrar",key=f"ren_c_{c['id']}",use_container_width=True):
-                        st.session_state["ren_chat"]=c["id"]; st.rerun()
-                    if st.button("📁 Mover a proyecto",key=f"mv_{c['id']}",use_container_width=True):
-                        st.session_state[f"mover_{c['id']}"]=True; st.rerun()
-                    if st.button("🗑️ Eliminar chat",key=f"dc_{c['id']}",use_container_width=True):
-                        supa("mensajes_chat","DELETE",filtro=f"?chat_id=eq.{c['id']}")
-                        supa("chats","DELETE",filtro=f"?id=eq.{c['id']}")
-                        if st.session_state.chat_activo==c["id"]: st.session_state.chat_activo=None
-                        st.rerun()
+                    with st.popover("⋮",use_container_width=True):
+                        if st.button("✏️ Renombrar",key=f"ren_c_{c['id']}",use_container_width=True):
+                            st.session_state["ren_chat"]=c["id"]; st.rerun()
+                        if st.button("📁 Mover a proyecto",key=f"mv_{c['id']}",use_container_width=True):
+                            st.session_state[f"mover_{c['id']}"]=True; st.rerun()
+                        if st.button("🗑️ Eliminar chat",key=f"dc_{c['id']}",use_container_width=True):
+                            supa("mensajes_chat","DELETE",filtro=f"?chat_id=eq.{c['id']}")
+                            supa("chats","DELETE",filtro=f"?id=eq.{c['id']}")
+                            if st.session_state.chat_activo==c["id"]: st.session_state.chat_activo=None
+                            st.rerun()
                 if st.session_state.get(f"mover_{c['id']}"):
                     proy_sel=st.selectbox("Mover a:",proy_nombres,key=f"ps_{c['id']}")
                     if st.button("✅ Confirmar",key=f"pc_{c['id']}"):
