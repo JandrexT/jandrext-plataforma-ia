@@ -1991,7 +1991,7 @@ elif sec=="mesa_ia" and rol=="admin":
                 txt_m=st.text_area("Pega aquí los partidos (un partido por línea)",height=180,placeholder="Ej:\nEngland vs Spain\nFrance vs Germany\nBrazil vs Argentina",key="ftbl_txt_m")
                 c_lm,c_jm=st.columns(2)
                 liga_m=c_lm.text_input("Liga/Torneo","Mundial 2026",key="liga_m")
-                jornada_m=c_jm.number_input("Jornada/Fase",1,100,1,key="jornada_m")
+                jornada_m=c_jm.text_input("Fase/Ronda","Grupo A",key="jornada_m")
                 if st.button("🤖 Parsear con IA y generar 150 rutas",type="primary",use_container_width=True,key="ftbl_manual"):
                     if not txt_m.strip(): st.warning("Pega la información de partidos primero.")
                     else:
@@ -1999,7 +1999,7 @@ elif sec=="mesa_ia" and rol=="admin":
                         if not gkey: st.error("GEMINI_API_KEY no configurada.")
                         else:
                             with st.spinner("🤖 Gemini parseando partidos..."):
-                                pr_txt=f'Extrae todos los partidos con sus cuotas. Solo JSON array: [{"local":"...","visitante":"...","cuota_1":1.0,"cuota_x":1.0,"cuota_2":1.0}]. Sin explicacion.\nTexto:\n{txt_m}'
+                                pr_txt=f'Extrae todos los partidos con sus cuotas. Solo JSON array: [{{"local":"...","visitante":"...","cuota_1":1.0,"cuota_x":1.0,"cuota_2":1.0}}]. Sin explicacion.\nTexto:\n{txt_m}'
                                 url_gm=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gkey}"
                                 bdy_gm={"contents":[{"parts":[{"text":pr_txt}]}],"generationConfig":{"maxOutputTokens":500,"temperature":0.1}}
                                 try:
@@ -2010,7 +2010,7 @@ elif sec=="mesa_ia" and rol=="admin":
                             if not partidos_m: st.error("No se pudieron extraer partidos del texto.")
                             else:
                                 bid_m=str(uuid.uuid4())
-                                supa("futbol_bloques","POST",{"id":bid_m,"user_id":u["id"],"liga":liga_m,"jornada":int(jornada_m),"temporada":2026,"status":"manual"})
+                                supa("futbol_bloques","POST",{"id":bid_m,"user_id":u["id"],"liga":f"{liga_m} — {jornada_m}","jornada":1,"temporada":2026,"status":"manual"})
                                 for pm in partidos_m:
                                     supa("futbol_partidos","POST",{"bloque_id":bid_m,"local":pm.get("local",""),"visitante":pm.get("visitante",""),"fecha":"","posicion_local":8,"posicion_visitante":8,"cuota_1":float(pm.get("cuota_1",2.0)),"cuota_x":float(pm.get("cuota_x",3.5)),"cuota_2":float(pm.get("cuota_2",3.0)),"forma_local":2,"forma_visitante":2})
                                 st.session_state["ftbl_bloque_sel"]=bid_m
