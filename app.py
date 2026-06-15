@@ -2005,8 +2005,7 @@ elif sec=="mesa_ia" and rol=="admin":
                             for ci_f,pi_f in enumerate(pj_f[:len(pred_cols_rf)]):
                                 with pred_cols_rf[ci_f]:
                                     pts_rf=pi_f.get("partido","?").split(" vs ")
-                                    st.markdown(f"**{pts_rf[0][:8]}**  
-vs {pts_rf[1][:8] if len(pts_rf)>1 else '?'}")
+                                    st.markdown(f"**{pts_rf[0][:8]}** vs {pts_rf[1][:8] if len(pts_rf)>1 else '?'}")
                                     pv_rf=pi_f.get("pred","?")
                                     ic2_f="🟢" if pv_rf=="1" else "🔵" if pv_rf=="X" else "🔴"
                                     st.markdown(f"**{ic2_f} {pv_rf}**")
