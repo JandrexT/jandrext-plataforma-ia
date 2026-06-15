@@ -1955,7 +1955,7 @@ elif sec=="mesa_ia" and rol=="admin":
                 supa("futbol_rutas","PATCH",{"hipotesis":h_x},filtro=f"?id=eq.{r_hx}")
             with concurrent.futures.ThreadPoolExecutor(max_workers=8) as _pool_x:
                 list(_pool_x.map(_hip_x,top_x))
-        tab_c,tab_r,tab_a=st.tabs(["📥 Cargar Partidos","📊 150 Rutas IA","📈 Resultados"])
+        tab_c,tab_r,tab_a,tab_b=st.tabs(["📥 Cargar Partidos","📊 150 Rutas IA","📈 Resultados","📚 Biblioteca"])
         with tab_c:
             cl1f,cl2f,cl3f=st.columns([2,1,1])
             liga_f=cl1f.selectbox("Liga",list(LIGAS_F.keys()),format_func=lambda x:LIGAS_F[x],key="liga_f")
@@ -2123,6 +2123,56 @@ elif sec=="mesa_ia" and rol=="admin":
                         if est_v["total"]>0:
                             pct=est_v["ok"]/est_v["total"]
                             st.progress(pct,text=f"{est_k}: {est_v['ok']}/{est_v['total']} ({pct*100:.0f}%)")
+                    st.markdown("---")
+                    notas_bib=st.text_area("📝 Notas para Biblioteca (opcional)",height=80,key="notas_bib_f")
+                    etiq_bib=st.text_input("🏷️ Etiquetas (separadas por coma)",key="etiq_bib_f")
+                    if st.button("💾 Archivar en Biblioteca",key="archivar_bib_f",use_container_width=True):
+                        bloque_bib_list=supa("futbol_bloques",filtro=f"?id=eq.{bid_a_f}")
+                        bloque_bib=next((b for b in bloque_bib_list if isinstance(b,dict)),{})
+                        top_rutas_bib=sorted(rutas_a_f,key=lambda r:-r.get("confidence_score",0))[:15]
+                        acc_res={k:{"ok":v["ok"],"total":v["total"],"pct":round(v["ok"]/v["total"],3) if v["total"] else 0} for k,v in by_est.items() if v["total"]>0}
+                        supa("ftbl_biblioteca","POST",{"user_id":u["id"],"titulo":f"{bloque_bib.get('liga','')} J{bloque_bib.get('jornada','')} {bloque_bib.get('temporada','')}","liga":bloque_bib.get("liga",""),"jornada":bloque_bib.get("jornada",0),"temporada":bloque_bib.get("temporada",0),"partidos_json":json.dumps(parts_a_f),"top_rutas_json":json.dumps(top_rutas_bib),"accuracy_resumen":json.dumps(acc_res),"notas":notas_bib,"etiquetas":[e.strip() for e in etiq_bib.split(",") if e.strip()],"fuente":bloque_bib.get("status","manual")})
+                        st.success("✅ Análisis archivado en Biblioteca ✅")
+        with tab_b:
+            st.markdown("### 📚 Biblioteca de Análisis")
+            bib_filter_f=st.text_input("🔍 Filtrar por liga, etiqueta o notas",key="bib_filter_f")
+            bib_all_f=supa("ftbl_biblioteca",filtro=f"?user_id=eq.{u['id']}&order=created_at.desc")
+            if not bib_all_f:
+                st.info("Aún no hay análisis archivados. Usa '💾 Archivar en Biblioteca' en la pestaña Resultados.")
+            else:
+                bib_items_f=[b for b in bib_all_f if isinstance(b,dict)]
+                if bib_filter_f:
+                    bib_items_f=[b for b in bib_items_f if bib_filter_f.lower() in json.dumps(b).lower()]
+                st.caption(f"{len(bib_items_f)} análisis archivados")
+                for bib_f in bib_items_f:
+                    bid_bib_f=bib_f.get("id","")
+                    titulo_bib_f=bib_f.get("titulo","Sin título")
+                    fecha_bib_f=str(bib_f.get("fecha_analisis",""))[:10]
+                    etiq_bib_f_show=", ".join(bib_f.get("etiquetas") or [])
+                    lbl_bib=f"📖 {titulo_bib_f} — {fecha_bib_f}"+(f" [{etiq_bib_f_show}]" if etiq_bib_f_show else "")
+                    with st.expander(lbl_bib):
+                        if bib_f.get("notas"): st.markdown(f"📝 *{bib_f['notas']}*")
+                        top_rts_f=json.loads(bib_f.get("top_rutas_json") or "[]")
+                        if top_rts_f:
+                            st.markdown("**🏆 Top Rutas:**")
+                            for tr_f in top_rts_f[:5]:
+                                st.caption(f"Ruta {tr_f.get('ruta_numero','')} | {tr_f.get('estrategia','')} | {tr_f.get('confidence_score',0)}% — {tr_f.get('hipotesis','')}")
+                        acc_bib_f=json.loads(bib_f.get("accuracy_resumen") or "{}")
+                        if acc_bib_f:
+                            st.markdown("**📊 Accuracy:**")
+                            for k_bib_f,v_bib_f in sorted(acc_bib_f.items(),key=lambda x:-x[1].get("pct",0)):
+                                st.caption(f"{k_bib_f}: {v_bib_f.get('ok',0)}/{v_bib_f.get('total',0)} ({round(v_bib_f.get('pct',0)*100)}%)")
+                        parts_bib_f=json.loads(bib_f.get("partidos_json") or "[]")
+                        if parts_bib_f:
+                            st.markdown("**⚽ Partidos:**")
+                            for p_bib_f in parts_bib_f:
+                                res_bib_f=p_bib_f.get("resultado_real","—") or "—"
+                                st.caption(f"🏠 {p_bib_f.get('local','')} vs ✈️ {p_bib_f.get('visitante','')} → {res_bib_f}")
+                        with st.popover("⋮ Acciones",use_container_width=False):
+                            if st.button("🗑️ Eliminar de Biblioteca",key=f"del_bib_{bid_bib_f}"):
+                                supa("ftbl_biblioteca","DELETE",filtro=f"?id=eq.{bid_bib_f}")
+                                st.rerun()
+
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown(f"""<div class="footer-inst">
     <span class="footer-acc">JandrexT</span> Soluciones Integrales &nbsp;·&nbsp;
