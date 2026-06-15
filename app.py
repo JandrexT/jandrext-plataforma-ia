@@ -1941,274 +1941,188 @@ elif sec=="mesa_ia" and rol=="admin":
     st.markdown("---")
     if st.session_state.get("mesa_modo","general")=="futbol":
         st.markdown("### ⚽ Laboratorio Fútbol 1X2 — Multiverso 150")
-        bloques_ftbl=supa("futbol_bloques",filtro=f"?user_id=eq.{u['id']}&order=created_at.desc") or []
-        tab_c,tab_r,tab_a=st.tabs(["📥 Cargar Bloque","🧮 150 Rutas","📊 Resultados"])
+        LIGAS_F={"PL":"Premier League","PD":"La Liga","BL1":"Bundesliga","SA":"Serie A","FL1":"Ligue 1"}
+        def _run_rutas(bid_x,parts_x):
+            rgs_x=generar_150_rutas_ftbl(parts_x); ids_x=[]
+            for rg_x in rgs_x:
+                rid_x=str(uuid.uuid4())
+                supa("futbol_rutas","POST",{"id":rid_x,"bloque_id":bid_x,"ruta_numero":rg_x["ruta"],"estrategia":rg_x["estrategia"],"predicciones_json":json.dumps(rg_x["preds"]),"confidence_score":rg_x["conf"],"hipotesis":f"Ruta {rg_x['ruta']} | {rg_x['estrategia']}"})
+                ids_x.append((rid_x,rg_x))
+            top_x=sorted(ids_x,key=lambda i:-i[1]["conf"])[:15]
+            def _hip_x(itm):
+                r_hx,rg_hx=itm
+                h_x=gemini_hipotesis_ftbl(rg_hx["ruta"],rg_hx["estrategia"],rg_hx["preds"],rg_hx["conf"])
+                supa("futbol_rutas","PATCH",{"hipotesis":h_x},filtro=f"?id=eq.{r_hx}")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as _pool_x:
+                list(_pool_x.map(_hip_x,top_x))
+        tab_c,tab_r,tab_a=st.tabs(["📥 Cargar Partidos","📊 150 Rutas IA","📈 Resultados"])
         with tab_c:
-            LIGAS_F={"PL":"Premier League","PD":"La Liga","BL1":"Bundesliga","SA":"Serie A","FL1":"Ligue 1"}
             cl1f,cl2f,cl3f=st.columns([2,1,1])
-            liga_f=cl1f.selectbox("Liga",list(LIGAS_F.keys()),format_func=lambda x:LIGAS_F[x],key="ftbl_liga")
-            jornada_f=cl2f.number_input("Jornada",1,38,1,key="ftbl_jornada")
-            temp_f=cl3f.text_input("Temporada","2024",key="ftbl_temp")
-            if st.button("📥 Cargar partidos (Football-Data.org)",type="primary",use_container_width=True,key="ftbl_load"):
+            liga_f=cl1f.selectbox("Liga",list(LIGAS_F.keys()),format_func=lambda x:LIGAS_F[x],key="liga_f")
+            jornada_f=cl2f.number_input("Jornada",1,38,38,key="jornada_f")
+            temp_f=cl3f.text_input("Temporada","2024",key="temp_f")
+            if st.button("📡 Cargar desde Football-Data.org",type="primary",use_container_width=True,key="ftbl_load"):
                 fkey=get_secret("FOOTBALL_API_KEY"); data_fd=None; err_fd=""
                 if not fkey:
                     st.error("❌ FOOTBALL_API_KEY no encontrada en Secrets.")
                 else:
                     with st.spinner("Consultando Football-Data.org..."):
                         try:
-                            params_fd={"season":int(temp_f)}
-                            params_fd["matchday"]=int(jornada_f)
-                            r_fd=req.get(f"https://api.football-data.org/v4/competitions/{liga_f}/matches",
-                                params=params_fd,
-                                headers={"X-Auth-Token":fkey},timeout=15)
-                            if r_fd.status_code==200:
-                                data_fd=r_fd.json()
-                            else:
-                                err_fd=f"HTTP {r_fd.status_code}: {r_fd.text[:300]}"
-                        except Exception as e_fd:
-                            err_fd=f"Excepcion: {str(e_fd)[:200]}"
+                            params_fd={"season":int(temp_f),"matchday":int(jornada_f)}
+                            r_fd=req.get(f"https://api.football-data.org/v4/competitions/{liga_f}/matches",params=params_fd,headers={"X-Auth-Token":fkey},timeout=15)
+                            if r_fd.status_code==200: data_fd=r_fd.json()
+                            else: err_fd=f"HTTP {r_fd.status_code}: {r_fd.text[:300]}"
+                        except Exception as e_fd: err_fd=f"Excepcion: {str(e_fd)[:200]}"
                 if data_fd and "matches" in data_fd:
                     matches_fd=data_fd["matches"][:20]; bid_new=str(uuid.uuid4())
-                    supa("futbol_bloques","POST",{"id":bid_new,"user_id":u["id"],"liga":LIGAS_F[liga_f],"jornada":int(jornada_f),"temporada":temp_f,"status":"cargado"})
+                    supa("futbol_bloques","POST",{"id":bid_new,"user_id":u["id"],"liga":LIGAS_F[liga_f],"jornada":int(jornada_f),"temporada":int(temp_f),"status":"cargado"})
                     for m_fd in matches_fd:
                         supa("futbol_partidos","POST",{"bloque_id":bid_new,"local":m_fd["homeTeam"]["name"],"visitante":m_fd["awayTeam"]["name"],"fecha":m_fd.get("utcDate",""),"posicion_local":8,"posicion_visitante":8,"cuota_1":2.0,"cuota_x":3.5,"cuota_2":3.0,"forma_local":2,"forma_visitante":2})
                     st.session_state["ftbl_bloque_sel"]=bid_new
-                    st.success(f"✅ {len(matches_fd)} partidos cargados — {LIGAS_F[liga_f]} J{jornada_f}"); st.rerun()
+                    st.success(f"✅ {len(matches_fd)} partidos cargados — {LIGAS_F[liga_f]} J{jornada_f}")
+                    with st.spinner("🧮 Generando 150 rutas + hipótesis IA..."):
+                        parts_nw=supa("futbol_partidos",filtro=f"?bloque_id=eq.{bid_new}")
+                        _run_rutas(bid_new,parts_nw)
+                    st.success("✅ 150 rutas + hipótesis listas"); st.rerun()
                 elif fkey:
-                    st.error(f"❌ {err_fd}" if err_fd else "❌ API no devolvio partidos. Verifica liga/jornada/temporada.")
+                    st.error(f"❌ {err_fd}" if err_fd else "❌ API no devolvió partidos. Verifica liga/jornada/temporada.")
+            st.markdown("---")
+            with st.expander("📋 Pegar partidos manualmente (Mundial, scraping, cualquier fuente)"):
+                txt_m=st.text_area("Pega aquí los partidos (un partido por línea)",height=180,placeholder="Ej:\nEngland vs Spain\nFrance vs Germany\nBrazil vs Argentina",key="ftbl_txt_m")
+                c_lm,c_jm=st.columns(2)
+                liga_m=c_lm.selectbox("Liga/Torneo",list(LIGAS_F.keys()),format_func=lambda x:LIGAS_F[x],key="liga_m")
+                jornada_m=c_jm.number_input("Jornada/Fase",1,100,1,key="jornada_m")
+                if st.button("🤖 Parsear con IA y generar 150 rutas",type="primary",use_container_width=True,key="ftbl_manual"):
+                    if not txt_m.strip(): st.warning("Pega la información de partidos primero.")
+                    else:
+                        gkey=get_secret("GEMINI_API_KEY")
+                        if not gkey: st.error("GEMINI_API_KEY no configurada.")
+                        else:
+                            with st.spinner("🤖 Gemini parseando partidos..."):
+                                pr_txt=f"Extrae todos los partidos. Solo JSON array: [{\"local\":\"...\",\"visitante\":\"...\"}]. Sin explicacion.\nTexto:\n{txt_m}"
+                                url_gm=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gkey}"
+                                bdy_gm={"contents":[{"parts":[{"text":pr_txt}]}],"generationConfig":{"maxOutputTokens":500,"temperature":0.1}}
+                                try:
+                                    rp_gm=req.post(url_gm,json=bdy_gm,timeout=15)
+                                    raw_gm=rp_gm.json()["candidates"][0]["content"]["parts"][0]["text"].strip().replace("```json","").replace("```","").strip()
+                                    partidos_m=json.loads(raw_gm)
+                                except: partidos_m=[]
+                            if not partidos_m: st.error("No se pudieron extraer partidos del texto.")
+                            else:
+                                bid_m=str(uuid.uuid4())
+                                supa("futbol_bloques","POST",{"id":bid_m,"user_id":u["id"],"liga":LIGAS_F.get(liga_m,liga_m),"jornada":int(jornada_m),"temporada":2026,"status":"manual"})
+                                for pm in partidos_m:
+                                    supa("futbol_partidos","POST",{"bloque_id":bid_m,"local":pm.get("local",""),"visitante":pm.get("visitante",""),"fecha":"","posicion_local":8,"posicion_visitante":8,"cuota_1":2.0,"cuota_x":3.5,"cuota_2":3.0,"forma_local":2,"forma_visitante":2})
+                                st.session_state["ftbl_bloque_sel"]=bid_m
+                                st.success(f"✅ {len(partidos_m)} partidos parseados")
+                                with st.spinner("🧮 Generando 150 rutas..."):
+                                    pts_m=supa("futbol_partidos",filtro=f"?bloque_id=eq.{bid_m}")
+                                    _run_rutas(bid_m,pts_m)
+                                st.success("✅ Todo listo"); st.rerun()
+            st.markdown("---")
+            bloques_ftbl=supa("futbol_bloques",filtro=f"?user_id=eq.{u['id']}&order=created_at.desc")
             if bloques_ftbl:
-                st.markdown("---"); st.caption("Bloques guardados")
+                st.caption("📁 Bloques guardados")
                 for b_ftbl in bloques_ftbl:
-                    if not isinstance(b_ftbl, dict): continue
-                    cb1_f,cb2_f=st.columns([4,1])
-                    with cb1_f:
-                        if st.button(f"⚽ {b_ftbl.get('liga','')} J{b_ftbl.get('jornada','')} ({b_ftbl.get('temporada','')})",key=f"bsel_{b_ftbl.get('id','')}",use_container_width=True):
-                            st.session_state["ftbl_bloque_sel"]=b_ftbl["id"]; st.rerun()
-                    with cb2_f:
-                        with st.popover("⋮",use_container_width=True):
-                            if st.button("🗑️ Eliminar",key=f"bdel_{b_ftbl.get('id','')}",use_container_width=True):
-                                supa("futbol_rutas","DELETE",filtro=f"?bloque_id=eq.{b_ftbl.get('id','')}")
-                                supa("futbol_partidos","DELETE",filtro=f"?bloque_id=eq.{b_ftbl.get('id','')}")
-                                supa("futbol_bloques","DELETE",filtro=f"?id=eq.{b_ftbl.get('id','')}"); st.rerun()
+                    if not isinstance(b_ftbl,dict): continue
+                    bid_sh=b_ftbl.get("id","")
+                    is_sel=bid_sh==st.session_state.get("ftbl_bloque_sel","")
+                    lbl_sh=("✅ " if is_sel else "")+"⚽ "+str(b_ftbl.get("liga",""))+" J"+str(b_ftbl.get("jornada",""))+" "+str(b_ftbl.get("temporada",""))
+                    with st.expander(lbl_sh,expanded=is_sel):
+                        pts_sh=supa("futbol_partidos",filtro=f"?bloque_id=eq.{bid_sh}&order=fecha.asc")
+                        if pts_sh:
+                            for p_sh in pts_sh:
+                                st.markdown(f"🏠 **{p_sh.get('local','')}** vs ✈️ **{p_sh.get('visitante','')}**")
+                        else: st.caption("Sin partidos registrados")
+                        ca_sh,cb_sh=st.columns([3,1])
+                        with ca_sh:
+                            if st.button("🚀 Analizar este bloque",key=f"go_{bid_sh}",type="primary",use_container_width=True):
+                                st.session_state["ftbl_bloque_sel"]=bid_sh; st.rerun()
+                        with cb_sh:
+                            with st.popover("⋮",use_container_width=True):
+                                if st.button("🗑️ Eliminar",key=f"del_{bid_sh}"):
+                                    supa("futbol_rutas","DELETE",filtro=f"?bloque_id=eq.{bid_sh}")
+                                    supa("futbol_partidos","DELETE",filtro=f"?bloque_id=eq.{bid_sh}")
+                                    supa("futbol_bloques","DELETE",filtro=f"?id=eq.{bid_sh}")
+                                    if st.session_state.get("ftbl_bloque_sel","")==bid_sh: del st.session_state["ftbl_bloque_sel"]
+                                    st.rerun()
         with tab_r:
             bid_r_f=st.session_state.get("ftbl_bloque_sel")
-            if not bid_r_f: st.info("👈 Primero carga o selecciona un bloque.")
+            if not bid_r_f: st.info("👈 Selecciona un bloque en la pestaña Cargar Partidos")
             else:
-                parts_r_f=supa("futbol_partidos",filtro=f"?bloque_id=eq.{bid_r_f}") or []
-                rutas_r_f=supa("futbol_rutas",filtro=f"?bloque_id=eq.{bid_r_f}&order=confidence_score.desc") or []
+                parts_r_f=supa("futbol_partidos",filtro=f"?bloque_id=eq.{bid_r_f}&order=fecha.asc")
+                rutas_r_f=supa("futbol_rutas",filtro=f"?bloque_id=eq.{bid_r_f}&order=confidence_score.desc")
+                if parts_r_f:
+                    st.markdown("**Partidos del bloque:**")
+                    cols_pr=st.columns(min(len(parts_r_f),4))
+                    for ix_pr,p_r in enumerate(parts_r_f):
+                        with cols_pr[ix_pr%len(cols_pr)]:
+                            st.info(f"🏠 {p_r.get('local','')}\nvs\n✈️ {p_r.get('visitante','')}")
+                    st.markdown("---")
                 if not rutas_r_f:
-                    with st.expander("✏️ Ajustar cuotas y forma"):
-                        for p_rf in parts_r_f:
+                    with st.expander("✏️ Ajustar cuotas y forma (opcional)"):
+                        for p_rf in (parts_r_f or []):
                             st.caption(f"⚽ {p_rf.get('local','')} vs {p_rf.get('visitante','')}")
                             cpa,cpb,cpc,cpd,cpe=st.columns(5)
-                            nv_c1=cpa.number_input("C1",0.01,20.0,float(p_rf.get("cuota_1",2.0)),0.01,key=f"c1_{p_rf['id']}")
-                            nv_cx=cpb.number_input("CX",0.01,20.0,float(p_rf.get("cuota_x",3.5)),0.01,key=f"cx_{p_rf['id']}")
-                            nv_c2=cpc.number_input("C2",0.01,20.0,float(p_rf.get("cuota_2",3.0)),0.01,key=f"c2_{p_rf['id']}")
+                            nv_c1=cpa.number_input("C1",0.01,20.0,float(p_rf.get("cuota_1",2.0)),key=f"c1_{p_rf['id']}")
+                            nv_cx=cpb.number_input("CX",0.01,20.0,float(p_rf.get("cuota_x",3.5)),key=f"cx_{p_rf['id']}")
+                            nv_c2=cpc.number_input("C2",0.01,20.0,float(p_rf.get("cuota_2",3.0)),key=f"c2_{p_rf['id']}")
                             nv_fl=cpd.number_input("FmL",0,5,int(p_rf.get("forma_local",2)),key=f"fl_{p_rf['id']}")
                             nv_fv=cpe.number_input("FmV",0,5,int(p_rf.get("forma_visitante",2)),key=f"fv_{p_rf['id']}")
                             supa("futbol_partidos","PATCH",{"cuota_1":nv_c1,"cuota_x":nv_cx,"cuota_2":nv_c2,"forma_local":nv_fl,"forma_visitante":nv_fv},filtro=f"?id=eq.{p_rf['id']}")
                     if st.button("🧮 Generar 150 Rutas + Hipótesis IA",type="primary",use_container_width=True,key="ftbl_gen"):
                         if parts_r_f:
-                            with st.spinner("Calculando 150 rutas con 9 estrategias..."):
-                                rgs_f=generar_150_rutas_ftbl(parts_r_f); ids_gen_f=[]
-                                for rg_f in rgs_f:
-                                    rid_f=str(uuid.uuid4())
-                                    supa("futbol_rutas","POST",{"id":rid_f,"bloque_id":bid_r_f,"ruta_numero":rg_f["ruta"],"estrategia":rg_f["estrategia"],"predicciones_json":json.dumps(rg_f["preds"]),"confidence_score":rg_f["conf"],"hipotesis":f"Ruta {rg_f['ruta']} | {rg_f['estrategia']}"})
-                                    ids_gen_f.append((rid_f,rg_f))
-                            top_ids_f=sorted(ids_gen_f,key=lambda x:-x[1]["conf"])[:15]
-                            with st.spinner("🤖 Gemini generando hipótesis top 15..."):
-                                def _gen_hip_f(item_f):
-                                    rid_hf,rg_hf=item_f
-                                    hip_f=gemini_hipotesis_ftbl(rg_hf["ruta"],rg_hf["estrategia"],rg_hf["preds"],rg_hf["conf"])
-                                    supa("futbol_rutas","PATCH",{"hipotesis":hip_f},filtro=f"?id=eq.{rid_hf}")
-                                with concurrent.futures.ThreadPoolExecutor(max_workers=8) as _ex_f:
-                                    list(_ex_f.map(_gen_hip_f,top_ids_f))
+                            with st.spinner("🧮 Calculando 150 rutas con 9 estrategias + hipótesis IA..."):
+                                _run_rutas(bid_r_f,parts_r_f)
                             st.success("✅ 150 rutas + hipótesis IA generadas"); st.rerun()
                 else:
-                    st.markdown(f"##### 🗺️ {len(rutas_r_f)} rutas — Top por confianza")
+                    st.success(f"✅ {len(rutas_r_f)} rutas generadas")
                     for rg_f in rutas_r_f[:30]:
-                        pj_f=json.loads(rg_f.get("predicciones_json") or "[]")
-                        cf_f=rg_f.get("confidence_score",50)
-                        icon_rf="🟢" if cf_f>=70 else "🟡" if cf_f>=55 else "🔴"
-                        ok_rf=rg_f.get("resultado_correcto")
-                        est_rf=(" ✅" if ok_rf==True else " ❌" if ok_rf==False else "")
-                        with st.expander(f"{icon_rf} Ruta {rg_f['ruta_numero']} | {rg_f['estrategia']} | {cf_f}%{est_rf}"):
-                            if rg_f.get("hipotesis"): st.caption(f"💡 {rg_f['hipotesis']}")
-                            pred_cols_rf=st.columns(max(len(pj_f),1))
-                            for ci_f,pi_f in enumerate(pj_f[:len(pred_cols_rf)]):
-                                with pred_cols_rf[ci_f]:
-                                    pts_rf=pi_f.get("partido","?").split(" vs ")
-                                    st.markdown(f"**{pts_rf[0][:8]}** vs {pts_rf[1][:8] if len(pts_rf)>1 else '?'}")
-                                    pv_rf=pi_f.get("pred","?")
-                                    ic2_f="🟢" if pv_rf=="1" else "🔵" if pv_rf=="X" else "🔴"
-                                    st.markdown(f"**{ic2_f} {pv_rf}**")
+                        preds_rg=json.loads(rg_f.get("predicciones_json") or "[]")
+                        with st.expander(f"Ruta {rg_f.get('ruta_numero','')} | {rg_f.get('estrategia','')} | {rg_f.get('confidence_score',0)}%"):
+                            st.caption(rg_f.get("hipotesis",""))
+                            for pred_r in preds_rg:
+                                st.write(f"• {pred_r.get('partido','')} → **{pred_r.get('pred','')}** ({pred_r.get('conf',0)}%)")
         with tab_a:
             bid_a_f=st.session_state.get("ftbl_bloque_sel")
-            if not bid_a_f: st.info("👈 Selecciona un bloque.")
+            if not bid_a_f: st.info("👈 Selecciona un bloque primero")
             else:
-                parts_a_f=supa("futbol_partidos",filtro=f"?bloque_id=eq.{bid_a_f}") or []
-                rutas_a_f=supa("futbol_rutas",filtro=f"?bloque_id=eq.{bid_a_f}") or []
-                rutas_con_res=[r for r in rutas_a_f if r.get("resultado_correcto") is not None]
-                if rutas_con_res:
-                    st.markdown("### 📊 Dashboard de Rendimiento")
-                    total_r=len(rutas_a_f); corr_r=sum(1 for r in rutas_con_res if r.get("resultado_correcto"))
-                    pct_r=round(corr_r/max(len(rutas_con_res),1)*100,1)
-                    m1_f,m2_f,m3_f=st.columns(3)
-                    m1_f.metric("Rutas totales",str(total_r))
-                    m2_f.metric("Rutas correctas",str(corr_r),f"{pct_r}% acierto")
-                    est_acc_f={}
+                rutas_a_f=supa("futbol_rutas",filtro=f"?bloque_id=eq.{bid_a_f}&order=confidence_score.desc")
+                parts_a_f=supa("futbol_partidos",filtro=f"?bloque_id=eq.{bid_a_f}")
+                if not rutas_a_f: st.info("Genera las 150 rutas en la pestaña anterior.")
+                else:
+                    st.markdown(f"**{len(rutas_a_f)} rutas** — registra los resultados reales:")
+                    res_map_f={}
+                    cols_ra_f=st.columns(min(len(parts_a_f),4))
+                    for idx_ra_f,pa_f in enumerate(parts_a_f):
+                        with cols_ra_f[idx_ra_f%len(cols_ra_f)]:
+                            st.caption(f"{pa_f.get('local','')[:12]} vs {pa_f.get('visitante','')[:12]}")
+                            res_pre_f=pa_f.get("resultado_real","_") or "_"
+                            ops_f=["_","1","X","2"]; idx_op_f=ops_f.index(res_pre_f) if res_pre_f in ops_f else 0
+                            r_sel_f=st.selectbox("",ops_f,index=idx_op_f,key=f"res_{pa_f['id']}")
+                            if r_sel_f!="_": res_map_f[pa_f["id"]]=r_sel_f
+                    if st.button("💾 Guardar y calcular aciertos",type="primary",use_container_width=True,key="ftbl_save_res"):
+                        for pid_rf,res_rf in res_map_f.items():
+                            supa("futbol_partidos","PATCH",{"resultado_real":res_rf},filtro=f"?id=eq.{pid_rf}")
+                        parts_fresh_f=supa("futbol_partidos",filtro=f"?bloque_id=eq.{bid_a_f}")
+                        real_m_f={p_f["id"]:p_f.get("resultado_real","_") for p_f in parts_fresh_f}
+                        for ruta_af in rutas_a_f:
+                            pj_af=json.loads(ruta_af.get("predicciones_json") or "[]")
+                            aci_af=sum(1 for p_f,pr_f in zip(parts_fresh_f,pj_af) if real_m_f.get(p_f["id"],"_")==pr_f.get("pred",""))
+                            ok_af=aci_af/max(len(pj_af),1)>=0.6
+                            supa("futbol_rutas","PATCH",{"resultado_correcto":ok_af},filtro=f"?id=eq.{ruta_af['id']}")
+                        st.success("✅ Resultados guardados"); st.rerun()
+                    st.markdown("---"); st.markdown("### 📊 Accuracy por estrategia")
+                    by_est={}
                     for r_af in rutas_a_f:
-                        ok_af2=r_af.get("resultado_correcto")
-                        if ok_af2 is None: continue
-                        e_af2=r_af.get("estrategia","?"); est_acc_f.setdefault(e_af2,[]).append(1 if ok_af2 else 0)
-                    if est_acc_f:
-                        best_e_f=max(est_acc_f,key=lambda k:sum(est_acc_f[k])/max(len(est_acc_f[k]),1))
-                        best_pct_f=round(sum(est_acc_f[best_e_f])/max(len(est_acc_f[best_e_f]),1)*100,1)
-                        m3_f.metric("Mejor estrategia",best_e_f,f"{best_pct_f}%")
-                    st.markdown("#### 📈 Accuracy por Estrategia")
-                    for ek_f,ev_f in sorted(est_acc_f.items(),key=lambda x:-sum(x[1])/max(len(x[1]),1)):
-                        avg_ef=sum(ev_f)/len(ev_f); pct_ef=round(avg_ef*100,1)
-                        ic_ef="🟢" if avg_ef>=0.6 else "🟡" if avg_ef>=0.45 else "🔴"
-                        st.progress(avg_ef,text=f"{ic_ef} {ek_f} — {pct_ef}% ({len(ev_f)} rutas)")
-                    st.markdown("---")
-                with st.expander("📝 Registrar resultados reales",expanded=not bool(rutas_con_res)):
-                    if parts_a_f:
-                        res_map_f={}
-                        cols_ra_f=st.columns(min(len(parts_a_f),4))
-                        for idx_ra_f,pa_f in enumerate(parts_a_f):
-                            with cols_ra_f[idx_ra_f%len(cols_ra_f)]:
-                                st.caption(f"{pa_f.get('local','')[:10]} vs {pa_f.get('visitante','')[:10]}")
-                                res_pre_f=pa_f.get("resultado_real","_") or "_"
-                                ops_f=["_","1","X","2"]; idx_op_f=ops_f.index(res_pre_f) if res_pre_f in ops_f else 0
-                                r_sel_f=st.selectbox("",ops_f,index=idx_op_f,key=f"res_{pa_f['id']}",label_visibility="collapsed")
-                                if r_sel_f!="_": res_map_f[pa_f["id"]]=r_sel_f
-                        if st.button("💾 Guardar y calcular aciertos",type="primary",use_container_width=True,key="ftbl_res"):
-                            for pid_rf,res_rf in res_map_f.items():
-                                supa("futbol_partidos","PATCH",{"resultado_real":res_rf},filtro=f"?id=eq.{pid_rf}")
-                            parts_fresh_f=supa("futbol_partidos",filtro=f"?bloque_id=eq.{bid_a_f}") or []
-                            real_m_f={p_f["id"]:p_f.get("resultado_real","_") for p_f in parts_fresh_f}
-                            for ruta_af in rutas_a_f:
-                                pj_af=json.loads(ruta_af.get("predicciones_json") or "[]")
-                                aci_af=sum(1 for p_f,pr_f in zip(parts_fresh_f,pj_af) if real_m_f.get(p_f["id"])==pr_f.get("pred"))
-                                ok_af=aci_af/max(len(pj_af),1)>=0.6
-                                supa("futbol_rutas","PATCH",{"resultado_correcto":ok_af},filtro=f"?id=eq.{ruta_af['id']}")
-                            st.success("✅ Resultados calculados"); st.rerun()
-                    else: st.info("No hay partidos.")
-        st.stop()
-    proyectos_ia=supa("mesa_ia_projects",filtro=f"?user_id=eq.{u['id']}&order=created_at.asc")
-    col_proj,col_main=st.columns([1,3])
-    with col_proj:
-        st.markdown("#### 📁 Proyectos")
-        if st.button("🆕 Nuevo proyecto",use_container_width=True,key="mesa_btn_nuevo"):
-            st.session_state["mesa_new_proj"]=not st.session_state.get("mesa_new_proj",False)
-        if st.session_state.get("mesa_new_proj",False):
-            np_nom=st.text_input("Nombre del proyecto",key="mesa_np_nom")
-            np_desc=st.text_area("Descripción (opcional)",key="mesa_np_desc",height=60)
-            if st.button("Crear ✅",key="mesa_crear_p"):
-                if np_nom.strip():
-                    supa("mesa_ia_projects","POST",{"user_id":u["id"],"nombre":np_nom.strip(),"descripcion":np_desc})
-                    st.session_state["mesa_new_proj"]=False
-                    st.rerun()
-        st.markdown("---")
-        p_sel=st.session_state.get("mesa_proj_sel",None)
-        for p in proyectos_ia:
-            es_activo=p_sel==p["id"]
-            cp1_mi,cp2_mi=st.columns([4,1])
-            with cp1_mi:
-                if st.button(f"{'▶ ' if es_activo else ''}{p['nombre']}",key=f"psel_{p['id']}",use_container_width=True):
-                    st.session_state["mesa_proj_sel"]=p["id"]
-                    st.session_state["mesa_proj_nombre"]=p["nombre"]
-                    st.session_state.pop("mesa_resultados",None)
-                    st.rerun()
-            with cp2_mi:
-                with st.popover("⋮"):
-                    if st.button("✏️ Renombrar",key=f"ren_p_{p['id']}",use_container_width=True):
-                        st.session_state["mesa_ren_proj"]=p["id"]; st.rerun()
-                    if st.button("🗑️ Eliminar proyecto",key=f"del_p_{p['id']}",use_container_width=True):
-                        supa("mesa_ia_sessions","DELETE",filtro=f"?project_id=eq.{p['id']}")
-                        supa("mesa_ia_projects","DELETE",filtro=f"?id=eq.{p['id']}")
-                        if st.session_state.get("mesa_proj_sel")==p["id"]: st.session_state.pop("mesa_proj_sel",None)
-                        st.rerun()
-        if not proyectos_ia:
-            st.info("Sin proyectos aún. Crea uno arriba.")
-    with col_main:
-        proj_id=st.session_state.get("mesa_proj_sel",None)
-        proj_nombre=st.session_state.get("mesa_proj_nombre","")
-        if not proj_id:
-            st.info("👈 Selecciona o crea un proyecto para comenzar.")
-        else:
-            st.markdown(f"### 📂 {proj_nombre}")
-            sesiones=supa("mesa_ia_sessions",filtro=f"?project_id=eq.{proj_id}&order=created_at.desc&limit=10")
-            if sesiones:
-                st.markdown("#### 📋 Historial del proyecto")
-                for s in sesiones:
-                    conf_icon={"Alto":"🟢","Medio":"🟡","Bajo":"🔴"}.get(s.get("confidence_level",""),"⚪")
-                    with st.expander(f"{conf_icon} {(s.get('user_prompt') or '')[:50]}...",expanded=False):
-                        st.caption(s.get("created_at","")[:16])
-                        st.markdown(f"**Confianza:** {s.get('confidence_level','')}")
-                        st.markdown(s.get("consensus_response","")[:500])
-                        with st.popover("⋮ Opciones"):
-                            if st.button("🗑️ Eliminar sesión",key=f"dses_{s['id']}",use_container_width=True):
-                                supa("mesa_ia_sessions","DELETE",filtro=f"?id=eq.{s['id']}"); st.rerun()
-                st.markdown("---")
-            if "mesa_resultados" in st.session_state:
-                confianza=st.session_state.get("mesa_confianza","Medio")
-                col_c={"Alto":"🟢","Medio":"🟡","Bajo":"🔴"}.get(confianza,"⚪")
-                st.markdown(f"**Pregunta:** {st.session_state.get('mesa_prompt_guardado','')}")
-                st.markdown(f"### {col_c} Confianza: **{confianza}**")
-                st.markdown("#### 🧠 Síntesis de Claude")
-                st.info(st.session_state.get("mesa_sintesis",""))
-                st.markdown("#### 🗣️ Respuestas individuales")
-                resultados_s=st.session_state["mesa_resultados"]
-                cols_r=st.columns(len(resultados_s))
-                for i,res in enumerate(resultados_s):
-                    with cols_r[i]:
-                        status_ok="✅" if res["ok"] else "❌"
-                        st.markdown(f"**{res['icono']} {res['ia']}** {status_ok}")
-                        st.caption(f"Rol: {res.get('rol','')} | {res.get('tiempo',0):.1f}s")
-                        if res["ok"]:
-                            st.markdown(f'<div style="background:#1a1a2e;padding:10px;border-radius:8px;font-size:0.85em">{res["respuesta"][:400]}</div>',unsafe_allow_html=True)
-                        else:
-                            st.error(res["respuesta"])
-                st.markdown("---")
-            st.markdown("#### 🆕 Nueva consulta")
-            campo_voz_html5("Tu consulta a la Mesa IA","mesa_prompt",height=100,placeholder="Escribe la pregunta o desafío para los 5 agentes...")
-            prompt_mesa=st.session_state.get("mesa_prompt","")
-            if st.button("🧠 Consultar Mesa IA",type="primary",use_container_width=True,key="mesa_consultar"):
-                if prompt_mesa.strip():
-                    fns_mesa=[chatgpt_fn,claude_fn,gemini_mesa_fn,groq_mesa_fn,mistral_mesa_fn]
-                    with st.spinner("🔄 Consultando los 5 agentes en paralelo..."):
-                        resultados=[]
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=15) as ex:
-                            futs=[ex.submit(f,prompt_mesa) for f in fns_mesa]
-                            for fut in concurrent.futures.as_completed(futs,timeout=35):
-                                try: resultados.append(fut.result())
-                                except Exception as e: resultados.append({"ia":"Agente","icono":"🔴","rol":"desconocido","respuesta":f"Timeout/Error: {str(e)[:100]}","tiempo":0,"ok":False})
-                    st.session_state["mesa_resultados"]=resultados
-                    st.session_state["mesa_prompt_guardado"]=prompt_mesa
-                    resp_map={r["ia"]:r["respuesta"] for r in resultados}
-                    sid=str(uuid.uuid4())
-                    supa("mesa_ia_sessions","POST",{
-                        "id":sid,"project_id":proj_id,"user_id":u["id"],
-                        "user_prompt":prompt_mesa,
-                        "gpt_response":resp_map.get("ChatGPT",""),
-                        "claude_response":resp_map.get("Claude",""),
-                        "gemini_response":resp_map.get("Gemini",""),
-                        "groq_response":resp_map.get("Groq",""),
-                        "mistral_response":resp_map.get("Mistral",""),
-                        "status":"processing_synthesis","mode":"general"})
-                    with st.spinner("🧠 Claude sintetizando consenso..."):
-                        try: sintesis,confianza=mesa_ia_sintesis_fn(prompt_mesa,resultados)
-                        except Exception as e: sintesis=f"Error en síntesis: {str(e)[:200]}";confianza="Bajo"
-                    st.session_state["mesa_sintesis"]=sintesis
-                    st.session_state["mesa_confianza"]=confianza
-                    supa("mesa_ia_sessions","PATCH",{
-                        "consensus_response":sintesis,
-                        "confidence_level":confianza,
-                        "status":"completed"},
-                        filtro=f"?id=eq.{sid}")
-                    st.session_state["mesa_prompt"]=""
-                    st.rerun()
+                        e_af=r_af.get("estrategia","?"); by_est.setdefault(e_af,{"ok":0,"total":0})
+                        if r_af.get("resultado_correcto") is not None:
+                            by_est[e_af]["total"]+=1
+                            if r_af.get("resultado_correcto"): by_est[e_af]["ok"]+=1
+                    for est_k,est_v in sorted(by_est.items(),key=lambda x:-x[1].get("ok",0)):
+                        if est_v["total"]>0:
+                            pct=est_v["ok"]/est_v["total"]
+                            st.progress(pct,text=f"{est_k}: {est_v['ok']}/{est_v['total']} ({pct*100:.0f}%)")
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown(f"""<div class="footer-inst">
     <span class="footer-acc">JandrexT</span> Soluciones Integrales &nbsp;·&nbsp;
