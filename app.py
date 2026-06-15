@@ -1999,7 +1999,7 @@ elif sec=="mesa_ia" and rol=="admin":
                         if not gkey: st.error("GEMINI_API_KEY no configurada.")
                         else:
                             with st.spinner("🤖 Gemini parseando partidos..."):
-                                pr_txt=f"Extrae todos los partidos. Solo JSON array: [{\"local\":\"...\",\"visitante\":\"...\"}]. Sin explicacion.\nTexto:\n{txt_m}"
+                                pr_txt=f'Extrae todos los partidos. Solo JSON array: [{{"local":"...","visitante":"..."}}]. Sin explicacion.\nTexto:\n{txt_m}'
                                 url_gm=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gkey}"
                                 bdy_gm={"contents":[{"parts":[{"text":pr_txt}]}],"generationConfig":{"maxOutputTokens":500,"temperature":0.1}}
                                 try:
