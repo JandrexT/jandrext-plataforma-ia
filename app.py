@@ -840,43 +840,47 @@ def limpiar_texto_wplay(texto):
     return '\n'.join(l for l in lineas if l)
 
 def parser_regex_wplay(texto_limpio):
-    """Parser regex principal (CAPA 1): recorre líneas con índice, detecta hora/fecha,
-    luego busca trío Equipo1+cuota / Empate+cuotaX / Equipo2+cuota2."""
+    """Parser máquina de estados para formato Wplay real (un elemento por línea).
+    Maneja: hora sola / fecha sola / equipo solo / cuota sola / Empate solo."""
     import re
     partidos=[]
     lineas=[l.strip() for l in texto_limpio.split('\n') if l.strip()]
-    i=0
     hora=""; fecha=""
+    i=0
     while i < len(lineas):
-        # Detectar línea de hora y fecha (ej: "11:00 15 Jun")
-        if re.search(r'\d{1,2}:\d{2}',lineas[i]):
-            hm=re.search(r'(\d{1,2}:\d{2})',lineas[i])
-            fm=re.search(r'(\d{1,2}\s+\w+)',lineas[i])
-            if hm: hora=hm.group(1)
-            if fm: fecha=fm.group(1)
-            i+=1
-            if i>=len(lineas): break
-        # Buscar: Equipo1 + cuota1 (al final de línea)
-        m1=re.search(r'^(.+?)\s+([\d]+\.[\d]+)$',lineas[i])
-        if m1 and i+2<len(lineas):
-            equipo1=m1.group(1).strip(); cuota1=float(m1.group(2))
-            i+=1
-            # Buscar: Empate + cuotaX
-            mx=re.search(r'[Ee]mpate\s+([\d]+\.[\d]+)',lineas[i])
-            if mx:
-                cuotax=float(mx.group(1)); i+=1
-                # Buscar: Equipo2 + cuota2
-                m2=re.search(r'^(.+?)\s+([\d]+\.[\d]+)',lineas[i])
-                if m2:
-                    equipo2=m2.group(1).strip(); cuota2=float(m2.group(2))
-                    partidos.append({
-                        "local":equipo1,"visitante":equipo2,
-                        "cuota_1":cuota1,"cuota_x":cuotax,"cuota_2":cuota2,
-                        "hora":hora,"fecha":fecha,
-                        "fuente":"manual","cuotas_estimadas":False,
-                        "contexto_h2h":"","observacion":""
-                    })
-                    i+=1; continue
+        l=lineas[i]
+        # Hora sola (ej: "11:00")
+        if re.match(r'^\d{1,2}:\d{2}$',l):
+            hora=l; i+=1; continue
+        # Fecha sola (ej: "15 Jun")
+        if re.match(r'^\d{1,2}\s+[A-Za-z\u00c0-\u024f]{3,}$',l):
+            fecha=l; i+=1; continue
+        # Cuota sola — saltar
+        if re.match(r'^\d+\.\d+$',l):
+            i+=1; continue
+        # "Empate" solo — saltar
+        if re.match(r'^[Ee]mpate$',l):
+            i+=1; continue
+        # Posible equipo: siguiente línea debe ser cuota
+        if i+1<len(lineas) and re.match(r'^\d+\.\d+$',lineas[i+1]):
+            equipo1=l; cuota1=float(lineas[i+1]); i+=2
+            # Buscar Empate
+            if i<len(lineas) and re.match(r'^[Ee]mpate$',lineas[i]):
+                i+=1
+                # Buscar cuota empate
+                if i<len(lineas) and re.match(r'^\d+\.\d+$',lineas[i]):
+                    cuotax=float(lineas[i]); i+=1
+                    # Buscar equipo2 (siguiente línea es cuota)
+                    if i<len(lineas) and i+1<len(lineas) and re.match(r'^\d+\.\d+$',lineas[i+1]):
+                        equipo2=lineas[i]; cuota2=float(lineas[i+1]); i+=2
+                        partidos.append({
+                            "local":equipo1,"visitante":equipo2,
+                            "cuota_1":cuota1,"cuota_x":cuotax,"cuota_2":cuota2,
+                            "hora":hora,"fecha":fecha,
+                            "fuente":"manual","cuotas_estimadas":False,
+                            "contexto_h2h":"","observacion":""
+                        })
+                        continue
         i+=1
     return partidos
 
