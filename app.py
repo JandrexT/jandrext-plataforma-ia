@@ -1988,10 +1988,10 @@ elif sec=="mesa_ia" and rol=="admin":
                     st.error(f"❌ {err_fd}" if err_fd else "❌ API no devolvió partidos. Verifica liga/jornada/temporada.")
             st.markdown("---")
             with st.expander("📋 Pegar partidos manualmente (Mundial, scraping, cualquier fuente)"):
-                txt_m=st.text_area("Pega aquí los partidos (un partido por línea)",height=180,placeholder="Ej:\nEngland vs Spain\nFrance vs Germany\nBrazil vs Argentina",key="ftbl_txt_m")
+                txt_m=st.text_area("Pega aquí los partidos (un partido por línea)",height=180,placeholder="Ej:\nEngland vs Spain\nFrance vs Germany\nBrazil vs Argentina",key=f"ftbl_txt_m_{st.session_state.get('ftbl_mc',0)}")
                 c_lm,c_jm=st.columns(2)
-                liga_m=c_lm.text_input("Liga/Torneo","Mundial 2026",key="liga_m")
-                jornada_m=c_jm.text_input("Fase/Ronda","Grupo A",key="jornada_m")
+                liga_m=c_lm.text_input("Liga/Torneo","Mundial 2026",key=f"liga_m_{st.session_state.get('ftbl_mc',0)}")
+                jornada_m=c_jm.text_input("Fase/Ronda","Grupo A",key=f"jornada_m_{st.session_state.get('ftbl_mc',0)}")
                 if st.button("🤖 Parsear con IA y generar 150 rutas",type="primary",use_container_width=True,key="ftbl_manual"):
                     if not txt_m.strip(): st.warning("Pega la información de partidos primero.")
                     else:
@@ -2018,7 +2018,7 @@ elif sec=="mesa_ia" and rol=="admin":
                                 with st.spinner("🧮 Generando 150 rutas..."):
                                     pts_m=supa("futbol_partidos",filtro=f"?bloque_id=eq.{bid_m}")
                                     _run_rutas(bid_m,pts_m)
-                                st.success("✅ Todo listo"); st.rerun()
+                                st.success("✅ Todo listo"); st.session_state["ftbl_mc"]=st.session_state.get("ftbl_mc",0)+1; st.rerun()
             st.markdown("---")
             bloques_ftbl=supa("futbol_bloques",filtro=f"?user_id=eq.{u['id']}&order=created_at.desc")
             if bloques_ftbl:
