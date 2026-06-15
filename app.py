@@ -933,6 +933,19 @@ def generar_150_rutas_ftbl(partidos):
         rutas.append({"ruta":n,"estrategia":f"{e1}+{e2}","preds":preds,"conf":round(ct/max(len(partidos),1))})
     return rutas
 
+def gemini_hipotesis_ftbl(ruta_num,estrategia,preds,conf):
+    gkey=get_secret("GEMINI_API_KEY")
+    if not gkey: return f"Ruta {ruta_num} | {estrategia} | {conf}%"
+    try:
+        resumen="; ".join([f"{p.get('partido','')} {p.get('pred','')}({p.get('conf',0)}%)" for p in preds[:4]])
+        prompt=f"Analista 1X2: hipótesis técnica concisa (1-2 frases) para ruta {ruta_num}, estrategia {estrategia}, confianza {conf}%. Partidos: {resumen}."
+        url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={gkey}"
+        body={"contents":[{"parts":[{"text":prompt}]}],"generationConfig":{"maxOutputTokens":80,"temperature":0.3}}
+        r_ghf=req.post(url,json=body,timeout=10)
+        if r_ghf.status_code==200: return r_ghf.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    except: pass
+    return f"Ruta {ruta_num} | {estrategia} | {conf}%"
+
 if sec=="inicio":
     st.markdown("## 🏠 Panel Principal")
     col1,col2,col3,col4=st.columns(4)
@@ -1931,7 +1944,7 @@ elif sec=="mesa_ia" and rol=="admin":
         bloques_ftbl=supa("futbol_bloques",filtro=f"?user_id=eq.{u['id']}&order=created_at.desc") or []
         tab_c,tab_r,tab_a=st.tabs(["📥 Cargar Bloque","🧮 150 Rutas","📊 Resultados"])
         with tab_c:
-            LIGAS_F={"PL":"Premier League","PD":"La Liga","BL1":"Bundesliga","SA":"Serie A","FL1":"Ligue 1"}
+            LIGAS_F={"PL":"Premier League","PD":"La Liga","BL1":"Bundesliga","SA":"Serie A","FL1":"Ligue 1","WC":"Mundial 2026"}
             cl1f,cl2f,cl3f=st.columns([2,1,1])
             liga_f=cl1f.selectbox("Liga",list(LIGAS_F.keys()),format_func=lambda x:LIGAS_F[x],key="ftbl_liga")
             jornada_f=cl2f.number_input("Jornada",1,38,1,key="ftbl_jornada")
@@ -1986,13 +1999,23 @@ elif sec=="mesa_ia" and rol=="admin":
                             nv_fl=cpd.number_input("FmL",0,5,int(p_rf.get("forma_local",2)),key=f"fl_{p_rf['id']}")
                             nv_fv=cpe.number_input("FmV",0,5,int(p_rf.get("forma_visitante",2)),key=f"fv_{p_rf['id']}")
                             supa("futbol_partidos","PATCH",{"cuota_1":nv_c1,"cuota_x":nv_cx,"cuota_2":nv_c2,"forma_local":nv_fl,"forma_visitante":nv_fv},filtro=f"?id=eq.{p_rf['id']}")
-                    if st.button("🧮 Generar 150 Rutas",type="primary",use_container_width=True,key="ftbl_gen"):
+                    if st.button("🧮 Generar 150 Rutas + Hipótesis IA",type="primary",use_container_width=True,key="ftbl_gen"):
                         if parts_r_f:
                             with st.spinner("Calculando 150 rutas con 9 estrategias..."):
-                                rgs_f=generar_150_rutas_ftbl(parts_r_f)
+                                rgs_f=generar_150_rutas_ftbl(parts_r_f); ids_gen_f=[]
                                 for rg_f in rgs_f:
-                                    supa("futbol_rutas","POST",{"bloque_id":bid_r_f,"ruta_numero":rg_f["ruta"],"estrategia":rg_f["estrategia"],"predicciones_json":json.dumps(rg_f["preds"]),"confidence_score":rg_f["conf"],"hipotesis":f"Ruta {rg_f['ruta']} {rg_f['estrategia']}"})
-                            st.success("✅ 150 rutas generadas"); st.rerun()
+                                    rid_f=str(uuid.uuid4())
+                                    supa("futbol_rutas","POST",{"id":rid_f,"bloque_id":bid_r_f,"ruta_numero":rg_f["ruta"],"estrategia":rg_f["estrategia"],"predicciones_json":json.dumps(rg_f["preds"]),"confidence_score":rg_f["conf"],"hipotesis":f"Ruta {rg_f['ruta']} | {rg_f['estrategia']}"})
+                                    ids_gen_f.append((rid_f,rg_f))
+                            top_ids_f=sorted(ids_gen_f,key=lambda x:-x[1]["conf"])[:15]
+                            with st.spinner("🤖 Gemini generando hipótesis top 15..."):
+                                def _gen_hip_f(item_f):
+                                    rid_hf,rg_hf=item_f
+                                    hip_f=gemini_hipotesis_ftbl(rg_hf["ruta"],rg_hf["estrategia"],rg_hf["preds"],rg_hf["conf"])
+                                    supa("futbol_rutas","PATCH",{"hipotesis":hip_f},filtro=f"?id=eq.{rid_hf}")
+                                with concurrent.futures.ThreadPoolExecutor(max_workers=8) as _ex_f:
+                                    list(_ex_f.map(_gen_hip_f,top_ids_f))
+                            st.success("✅ 150 rutas + hipótesis IA generadas"); st.rerun()
                 else:
                     st.markdown(f"##### 🗺️ {len(rutas_r_f)} rutas — Top por confianza")
                     for rg_f in rutas_r_f[:30]:
@@ -2002,6 +2025,7 @@ elif sec=="mesa_ia" and rol=="admin":
                         ok_rf=rg_f.get("resultado_correcto")
                         est_rf=(" ✅" if ok_rf==True else " ❌" if ok_rf==False else "")
                         with st.expander(f"{icon_rf} Ruta {rg_f['ruta_numero']} | {rg_f['estrategia']} | {cf_f}%{est_rf}"):
+                            if rg_f.get("hipotesis"): st.caption(f"💡 {rg_f['hipotesis']}")
                             pred_cols_rf=st.columns(max(len(pj_f),1))
                             for ci_f,pi_f in enumerate(pj_f[:len(pred_cols_rf)]):
                                 with pred_cols_rf[ci_f]:
@@ -2016,32 +2040,52 @@ elif sec=="mesa_ia" and rol=="admin":
             else:
                 parts_a_f=supa("futbol_partidos",filtro=f"?bloque_id=eq.{bid_a_f}") or []
                 rutas_a_f=supa("futbol_rutas",filtro=f"?bloque_id=eq.{bid_a_f}") or []
-                if parts_a_f:
-                    res_map_f={}
-                    cols_ra_f=st.columns(min(len(parts_a_f),4))
-                    for idx_ra_f,pa_f in enumerate(parts_a_f):
-                        with cols_ra_f[idx_ra_f%len(cols_ra_f)]:
-                            st.caption(f"{pa_f.get('local','')[:10]} vs {pa_f.get('visitante','')[:10]}")
-                            r_sel_f=st.selectbox("",["?","1","X","2"],key=f"res_{pa_f['id']}",label_visibility="collapsed")
-                            if r_sel_f!="?": res_map_f[pa_f["id"]]=r_sel_f
-                    if st.button("💾 Guardar y calcular aciertos",type="primary",use_container_width=True,key="ftbl_res"):
-                        for pid_rf,res_rf in res_map_f.items():
-                            supa("futbol_partidos","PATCH",{"resultado_real":res_rf},filtro=f"?id=eq.{pid_rf}")
-                        parts_fresh_f=supa("futbol_partidos",filtro=f"?bloque_id=eq.{bid_a_f}") or []
-                        real_m_f={p_f["id"]:p_f.get("resultado_real","?") for p_f in parts_fresh_f}
-                        est_st_f={}
-                        for ruta_af in rutas_a_f:
-                            pj_af=json.loads(ruta_af.get("predicciones_json") or "[]")
-                            aci_af=sum(1 for p_f,pr_f in zip(parts_fresh_f,pj_af) if real_m_f.get(p_f["id"])==pr_f.get("pred"))
-                            ok_af=aci_af/max(len(pj_af),1)>=0.6
-                            supa("futbol_rutas","PATCH",{"resultado_correcto":ok_af},filtro=f"?id=eq.{ruta_af['id']}")
-                            e_af=ruta_af.get("estrategia","?"); est_st_f.setdefault(e_af,[]).append(aci_af/max(len(pj_af),1))
-                        st.success("✅ Resultados calculados")
-                        for ek_f,ev_f in sorted(est_st_f.items(),key=lambda x:-sum(x[1])/max(len(x[1]),1)):
-                            avg_f=sum(ev_f)/len(ev_f)
-                            ic_f="🟢" if avg_f>=0.6 else "🟡" if avg_f>=0.45 else "🔴"
-                            st.metric(f"{ic_f} {ek_f}",f"{avg_f*100:.1f}%")
-                        st.rerun()
+                rutas_con_res=[r for r in rutas_a_f if r.get("resultado_correcto") is not None]
+                if rutas_con_res:
+                    st.markdown("### 📊 Dashboard de Rendimiento")
+                    total_r=len(rutas_a_f); corr_r=sum(1 for r in rutas_con_res if r.get("resultado_correcto"))
+                    pct_r=round(corr_r/max(len(rutas_con_res),1)*100,1)
+                    m1_f,m2_f,m3_f=st.columns(3)
+                    m1_f.metric("Rutas totales",str(total_r))
+                    m2_f.metric("Rutas correctas",str(corr_r),f"{pct_r}% acierto")
+                    est_acc_f={}
+                    for r_af in rutas_a_f:
+                        ok_af2=r_af.get("resultado_correcto")
+                        if ok_af2 is None: continue
+                        e_af2=r_af.get("estrategia","?"); est_acc_f.setdefault(e_af2,[]).append(1 if ok_af2 else 0)
+                    if est_acc_f:
+                        best_e_f=max(est_acc_f,key=lambda k:sum(est_acc_f[k])/max(len(est_acc_f[k]),1))
+                        best_pct_f=round(sum(est_acc_f[best_e_f])/max(len(est_acc_f[best_e_f]),1)*100,1)
+                        m3_f.metric("Mejor estrategia",best_e_f,f"{best_pct_f}%")
+                    st.markdown("#### 📈 Accuracy por Estrategia")
+                    for ek_f,ev_f in sorted(est_acc_f.items(),key=lambda x:-sum(x[1])/max(len(x[1]),1)):
+                        avg_ef=sum(ev_f)/len(ev_f); pct_ef=round(avg_ef*100,1)
+                        ic_ef="🟢" if avg_ef>=0.6 else "🟡" if avg_ef>=0.45 else "🔴"
+                        st.progress(avg_ef,text=f"{ic_ef} {ek_f} — {pct_ef}% ({len(ev_f)} rutas)")
+                    st.markdown("---")
+                with st.expander("📝 Registrar resultados reales",expanded=not bool(rutas_con_res)):
+                    if parts_a_f:
+                        res_map_f={}
+                        cols_ra_f=st.columns(min(len(parts_a_f),4))
+                        for idx_ra_f,pa_f in enumerate(parts_a_f):
+                            with cols_ra_f[idx_ra_f%len(cols_ra_f)]:
+                                st.caption(f"{pa_f.get('local','')[:10]} vs {pa_f.get('visitante','')[:10]}")
+                                res_pre_f=pa_f.get("resultado_real","_") or "_"
+                                ops_f=["_","1","X","2"]; idx_op_f=ops_f.index(res_pre_f) if res_pre_f in ops_f else 0
+                                r_sel_f=st.selectbox("",ops_f,index=idx_op_f,key=f"res_{pa_f['id']}",label_visibility="collapsed")
+                                if r_sel_f!="_": res_map_f[pa_f["id"]]=r_sel_f
+                        if st.button("💾 Guardar y calcular aciertos",type="primary",use_container_width=True,key="ftbl_res"):
+                            for pid_rf,res_rf in res_map_f.items():
+                                supa("futbol_partidos","PATCH",{"resultado_real":res_rf},filtro=f"?id=eq.{pid_rf}")
+                            parts_fresh_f=supa("futbol_partidos",filtro=f"?bloque_id=eq.{bid_a_f}") or []
+                            real_m_f={p_f["id"]:p_f.get("resultado_real","_") for p_f in parts_fresh_f}
+                            for ruta_af in rutas_a_f:
+                                pj_af=json.loads(ruta_af.get("predicciones_json") or "[]")
+                                aci_af=sum(1 for p_f,pr_f in zip(parts_fresh_f,pj_af) if real_m_f.get(p_f["id"])==pr_f.get("pred"))
+                                ok_af=aci_af/max(len(pj_af),1)>=0.6
+                                supa("futbol_rutas","PATCH",{"resultado_correcto":ok_af},filtro=f"?id=eq.{ruta_af['id']}")
+                            st.success("✅ Resultados calculados"); st.rerun()
+                    else: st.info("No hay partidos.")
         st.stop()
     proyectos_ia=supa("mesa_ia_projects",filtro=f"?user_id=eq.{u['id']}&order=created_at.asc")
     col_proj,col_main=st.columns([1,3])
