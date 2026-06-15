@@ -934,7 +934,7 @@ def generar_150_rutas_ftbl(partidos):
     return rutas
 
 def gemini_hipotesis_ftbl(ruta_num,estrategia,preds,conf):
-    gkey=get_secret("GEMINI_API_KEY") or get_secret("GEMINI_KEY") or get_secret("gemini_api_key")
+    gkey=get_secret("GOOGLE_API_KEY")
     if not gkey: return f"Ruta {ruta_num} | {estrategia} | {conf}%"
     try:
         resumen="; ".join([f"{p.get('partido','')} {p.get('pred','')}({p.get('conf',0)}%)" for p in preds[:4]])
@@ -1995,7 +1995,7 @@ elif sec=="mesa_ia" and rol=="admin":
                 if st.button("🤖 Parsear con IA y generar 150 rutas",type="primary",use_container_width=True,key="ftbl_manual"):
                     if not txt_m.strip(): st.warning("Pega la información de partidos primero.")
                     else:
-                        gkey=get_secret("GEMINI_API_KEY") or get_secret("GEMINI_KEY") or get_secret("gemini_api_key")
+                        gkey=get_secret("GOOGLE_API_KEY")
                         if not gkey: st.error("GEMINI_API_KEY no configurada.")
                         else:
                             with st.spinner("🤖 Gemini parseando partidos..."):
