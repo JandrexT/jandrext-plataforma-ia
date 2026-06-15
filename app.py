@@ -165,13 +165,13 @@ Tel: 317 391 0621 | proyectos@jandrext.com | Bogotá, Colombia
 Comportamiento: empático, profesional, práctico. Normas colombianas cuando aplique."""
 
 # ── IAs ───────────────────────────────────────────────────────────────────────
-def gemini_fn(p, modelo="gemini-2.0-flash", sistema=None):
+def gemini_fn(p, modelo="gemini-1.5-flash", sistema=None):
     """Gemini para Mesa General — x-goog-api-key en headers + generationConfig."""
     try:
         t=time.time()
         api_key=get_secret("GOOGLE_API_KEY")
         if not api_key: return {"ia":"Gemini","icono":"🔴","respuesta":"Sin API key","tiempo":0,"ok":False}
-        GEMINI_URL=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent"
+        GEMINI_URL=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo.replace('gemini-2.0-flash','gemini-1.5-flash')}:generateContent"
         headers={"Content-Type":"application/json","x-goog-api-key":api_key}
         sys_ctx=sistema if sistema else CONTEXTO
         payload={
@@ -191,7 +191,7 @@ def gemini_mesa_fn(prompt_texto, temperatura=0.0, max_tokens=4000):
     import json as _json
     api_key=get_secret("GOOGLE_API_KEY")
     if not api_key: return f"Error: GOOGLE_API_KEY no encontrada en Streamlit Secrets."
-    GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+    GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
     headers={"Content-Type":"application/json","x-goog-api-key":api_key}
     payload={
         "contents":[{"parts":[{"text":prompt_texto}]}],
@@ -288,7 +288,7 @@ def juez_fn(pregunta, respuestas):
     try:
         api_key = get_secret("GOOGLE_API_KEY")
         if api_key:
-            GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+            GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
             headers_j={"Content-Type":"application/json","x-goog-api-key":api_key}
             payload={"contents":[{"parts":[{"text":prompt_juez}]}],
                      "generationConfig":{"temperature":0.3,"maxOutputTokens":1500}}
@@ -301,11 +301,11 @@ def juez_fn(pregunta, respuestas):
     except: pass
     return max(ok_resps, key=lambda x: len(x["respuesta"]))["respuesta"]
 
-def ia_generar(prompt, modelo="gemini-2.0-flash"):
+def ia_generar(prompt, modelo="gemini-1.5-flash"):
     try:
         api_key=get_secret("GOOGLE_API_KEY")
         if not api_key: return groq_simple(prompt)
-        GEMINI_URL=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent"
+        GEMINI_URL=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo.replace('gemini-2.0-flash','gemini-1.5-flash')}:generateContent"
         headers_g={"Content-Type":"application/json","x-goog-api-key":api_key}
         payload={"contents":[{"parts":[{"text":CONTEXTO+"\n\n"+prompt}]}],
                  "generationConfig":{"temperature":0.7,"maxOutputTokens":1500}}
@@ -335,7 +335,7 @@ Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones."""
             mime = "application/pdf" if tipo=="pdf" else "image/jpeg"
             payload = {"contents":[{"parts":[{"text":prompt_json},{"inline_data":{"mime_type":mime,"data":b64}}]}],
                        "generationConfig":{"temperature":0.0,"maxOutputTokens":600}}
-            GEMINI_URL_DOC="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+            GEMINI_URL_DOC="https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
             headers_d={"Content-Type":"application/json","x-goog-api-key":api_key}
             r = req.post(GEMINI_URL_DOC, headers=headers_d, json=payload, timeout=45)
             if r.status_code == 200:
@@ -828,13 +828,16 @@ def detectar_texto_futbol_1x2(texto):
     return False
 
 def limpiar_texto_wplay(texto):
-    """Elimina ★, códigos de evento y artefactos de navegación del texto de Wplay."""
+    """Elimina ★, códigos de evento y artefactos de navegación. PRESERVA saltos de línea."""
     import re
     texto=texto.replace("★","").replace("⭐","")
+    # Eliminar códigos de evento (números solos > 200)
     texto=re.sub(r'\b[2-9]\d{2,}\b','',texto)
+    # Eliminar artefactos de paginación
     texto=re.sub(r'P[aá]gina ant\.?|Siguiente p[aá]gina|\d+\s*/\s*\d+','',texto,flags=re.IGNORECASE)
-    texto=re.sub(r'\s+',' ',texto).strip()
-    return texto
+    # Colapsar espacios DENTRO de cada línea, pero PRESERVAR saltos de línea
+    lineas=[re.sub(r'[ \t]+',' ',l).strip() for l in texto.split('\n')]
+    return '\n'.join(l for l in lineas if l)
 
 def parser_regex_wplay(texto_limpio):
     """Parser regex principal (CAPA 1): recorre líneas con índice, detecta hora/fecha,
