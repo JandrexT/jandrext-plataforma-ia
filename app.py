@@ -2008,12 +2008,12 @@ elif sec=="mesa_ia" and rol=="admin":
                                     partidos_m=json.loads(raw_gm)
                                 except: partidos_m=[]
                             if not partidos_m: st.error("No se pudieron extraer partidos del texto.")
-                else:
-                    st.session_state["ftbl_preview"]=partidos_m
-                    st.session_state["ftbl_prev_liga"]=liga_m
-                    st.session_state["ftbl_prev_fase"]=jornada_m
-                    st.session_state["ftbl_mc"]=st.session_state.get("ftbl_mc",0)+1
-                    st.rerun()
+                            else:
+                                st.session_state["ftbl_preview"]=partidos_m
+                                st.session_state["ftbl_prev_liga"]=liga_m
+                                st.session_state["ftbl_prev_fase"]=jornada_m
+                                st.session_state["ftbl_mc"]=st.session_state.get("ftbl_mc",0)+1
+                                st.rerun()
             # ── Preview de partidos parseados ──
             prev_pts_pre=st.session_state.get("ftbl_preview",[])
             if prev_pts_pre:
