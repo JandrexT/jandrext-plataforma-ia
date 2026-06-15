@@ -2008,17 +2008,39 @@ elif sec=="mesa_ia" and rol=="admin":
                                     partidos_m=json.loads(raw_gm)
                                 except: partidos_m=[]
                             if not partidos_m: st.error("No se pudieron extraer partidos del texto.")
-                            else:
-                                bid_m=str(uuid.uuid4())
-                                supa("futbol_bloques","POST",{"id":bid_m,"user_id":u["id"],"liga":f"{liga_m} — {jornada_m}","jornada":1,"temporada":2026,"status":"manual"})
-                                for pm in partidos_m:
-                                    supa("futbol_partidos","POST",{"bloque_id":bid_m,"local":pm.get("local",""),"visitante":pm.get("visitante",""),"fecha":"","posicion_local":8,"posicion_visitante":8,"cuota_1":float(pm.get("cuota_1",2.0)),"cuota_x":float(pm.get("cuota_x",3.5)),"cuota_2":float(pm.get("cuota_2",3.0)),"forma_local":2,"forma_visitante":2})
-                                st.session_state["ftbl_bloque_sel"]=bid_m
-                                st.success(f"✅ {len(partidos_m)} partidos parseados")
-                                with st.spinner("🧮 Generando 150 rutas..."):
-                                    pts_m=supa("futbol_partidos",filtro=f"?bloque_id=eq.{bid_m}")
-                                    _run_rutas(bid_m,pts_m)
-                                st.success("✅ Todo listo"); st.session_state["ftbl_mc"]=st.session_state.get("ftbl_mc",0)+1; st.rerun()
+                else:
+                    st.session_state["ftbl_preview"]=partidos_m
+                    st.session_state["ftbl_prev_liga"]=liga_m
+                    st.session_state["ftbl_prev_fase"]=jornada_m
+                    st.session_state["ftbl_mc"]=st.session_state.get("ftbl_mc",0)+1
+                    st.rerun()
+            # ── Preview de partidos parseados ──
+            prev_pts_pre=st.session_state.get("ftbl_preview",[])
+            if prev_pts_pre:
+                prev_liga_pre=st.session_state.get("ftbl_prev_liga","")
+                prev_fase_pre=st.session_state.get("ftbl_prev_fase","")
+                st.success(f"✅ Gemini extrajo **{len(prev_pts_pre)} partidos** — revisa antes de generar:")
+                for pp_i,pp_pre in enumerate(prev_pts_pre):
+                    st.markdown(f"`{pp_i+1}.` 🏠 **{pp_pre.get('local','')}** vs ✈️ **{pp_pre.get('visitante','')}** — 1:{pp_pre.get('cuota_1','—')} | X:{pp_pre.get('cuota_x','—')} | 2:{pp_pre.get('cuota_2','—')}")
+                c_ok_pre,c_no_pre=st.columns(2)
+                with c_ok_pre:
+                    if st.button("✅ Confirmar y generar 150 rutas",type="primary",use_container_width=True,key="ftbl_confirm_pre"):
+                        bid_m_pre=str(uuid.uuid4())
+                        supa("futbol_bloques","POST",{"id":bid_m_pre,"user_id":u["id"],"liga":f"{prev_liga_pre} — {prev_fase_pre}","jornada":1,"temporada":2026,"status":"manual"})
+                        for pm_pre in prev_pts_pre:
+                            supa("futbol_partidos","POST",{"bloque_id":bid_m_pre,"local":pm_pre.get("local",""),"visitante":pm_pre.get("visitante",""),"fecha":"","posicion_local":8,"posicion_visitante":8,"cuota_1":float(pm_pre.get("cuota_1",2.0)),"cuota_x":float(pm_pre.get("cuota_x",3.5)),"cuota_2":float(pm_pre.get("cuota_2",3.0)),"forma_local":2,"forma_visitante":2})
+                        st.session_state["ftbl_bloque_sel"]=bid_m_pre
+                        del st.session_state["ftbl_preview"]
+                        with st.spinner("🧮 Generando 150 rutas + hipótesis IA..."):
+                            pts_m_pre=supa("futbol_partidos",filtro=f"?bloque_id=eq.{bid_m_pre}")
+                            _run_rutas(bid_m_pre,pts_m_pre)
+                        st.success("✅ 150 rutas listas — ve a la pestaña 📊")
+                        st.rerun()
+                with c_no_pre:
+                    if st.button("❌ Cancelar y reescribir",use_container_width=True,key="ftbl_cancel_pre"):
+                        del st.session_state["ftbl_preview"]
+                        st.rerun()
+
             st.markdown("---")
             bloques_ftbl=supa("futbol_bloques",filtro=f"?user_id=eq.{u['id']}&order=created_at.desc")
             if bloques_ftbl:
@@ -2083,6 +2105,46 @@ elif sec=="mesa_ia" and rol=="admin":
                             st.caption(rg_f.get("hipotesis",""))
                             for pred_r in preds_rg:
                                 st.write(f"• {pred_r.get('partido','')} → **{pred_r.get('pred','')}** ({pred_r.get('conf',0)}%)")
+        # ── Ticket Copiable ─────────────────────────────────────────
+        if bid_r_f and rutas_r_f:
+            st.markdown("---")
+            st.markdown("### 🎟️ Ticket Parlay — Top Ruta")
+            top_ruta_tk=sorted(rutas_r_f,key=lambda r:-r.get("confidence_score",0))[0]
+            blq_info_tk=supa("futbol_bloques",filtro=f"?id=eq.{bid_r_f}")
+            blq_tk=next((b for b in blq_info_tk if isinstance(b,dict)),{})
+            preds_tk=json.loads(top_ruta_tk.get("predicciones_json") or "[]")
+            lbl_map={"1":"Local ✅","X":"Empate 🤝","2":"Visitante ✈️"}
+            lineas_tk=[f"🎟️  PARLAY JANDREXT — {blq_tk.get('liga','')}","━"*44]
+            for idx_tk,pr_tk in enumerate(preds_tk):
+                lineas_tk.append(f"  {idx_tk+1}. {pr_tk.get('partido','')}  →  {pr_tk.get('pred','')} ({lbl_map.get(pr_tk.get('pred',''),'?')})")
+            lineas_tk.append("━"*44)
+            lineas_tk.append(f"  Estrategia : {top_ruta_tk.get('estrategia','')}")
+            lineas_tk.append(f"  Confianza  : {top_ruta_tk.get('confidence_score',0)}%")
+            if top_ruta_tk.get("hipotesis"):
+                lineas_tk.append(f"  IA         : {top_ruta_tk.get('hipotesis','')}")
+            lineas_tk.append("━"*44)
+            st.code("
+".join(lineas_tk),language=None)
+            st.caption("📋 Selecciona todo el texto de arriba y cópialo directo a Wplay o tu plataforma de apuestas.")
+            # Selector de ruta alternativa
+            with st.expander("🔄 Elegir otra ruta como ticket"):
+                ruta_opts=[f"Ruta {r.get('ruta_numero','')} | {r.get('estrategia','')} | {r.get('confidence_score',0)}%" for r in rutas_r_f[:20]]
+                sel_idx_tk=st.selectbox("Selecciona ruta",range(len(ruta_opts)),format_func=lambda i:ruta_opts[i],key="ticket_sel_idx")
+                if sel_idx_tk is not None:
+                    alt_ruta=rutas_r_f[sel_idx_tk]
+                    preds_alt=json.loads(alt_ruta.get("predicciones_json") or "[]")
+                    alt_lineas=[f"🎟️  PARLAY JANDREXT — {blq_tk.get('liga','')} (Ruta {alt_ruta.get('ruta_numero','')})","━"*44]
+                    for idx_a,pr_a in enumerate(preds_alt):
+                        alt_lineas.append(f"  {idx_a+1}. {pr_a.get('partido','')}  →  {pr_a.get('pred','')} ({lbl_map.get(pr_a.get('pred',''),'?')})")
+                    alt_lineas.append("━"*44)
+                    alt_lineas.append(f"  Estrategia : {alt_ruta.get('estrategia','')}")
+                    alt_lineas.append(f"  Confianza  : {alt_ruta.get('confidence_score',0)}%")
+                    if alt_ruta.get("hipotesis"):
+                        alt_lineas.append(f"  IA         : {alt_ruta.get('hipotesis','')}")
+                    alt_lineas.append("━"*44)
+                    st.code("
+".join(alt_lineas),language=None)
+
         with tab_a:
             bid_a_f=st.session_state.get("ftbl_bloque_sel")
             if not bid_a_f: st.info("👈 Selecciona un bloque primero")
