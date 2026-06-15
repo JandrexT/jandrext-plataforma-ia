@@ -166,18 +166,19 @@ Comportamiento: empático, profesional, práctico. Normas colombianas cuando apl
 
 # ── IAs ───────────────────────────────────────────────────────────────────────
 def gemini_fn(p, modelo="gemini-2.0-flash", sistema=None):
-    """Gemini para Mesa General — key en URL, generationConfig correcto."""
+    """Gemini para Mesa General — x-goog-api-key en headers + generationConfig."""
     try:
         t=time.time()
         api_key=get_secret("GOOGLE_API_KEY")
         if not api_key: return {"ia":"Gemini","icono":"🔴","respuesta":"Sin API key","tiempo":0,"ok":False}
-        url=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
+        GEMINI_URL=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent"
+        headers={"Content-Type":"application/json","x-goog-api-key":api_key}
         sys_ctx=sistema if sistema else CONTEXTO
         payload={
             "contents":[{"parts":[{"text":sys_ctx+"\n\nConsulta: "+p}]}],
             "generationConfig":{"temperature":0.7,"maxOutputTokens":1500}
         }
-        r=req.post(url,headers={"Content-Type":"application/json"},json=payload,timeout=30)
+        r=req.post(GEMINI_URL,headers=headers,json=payload,timeout=30)
         if r.status_code==200:
             txt=r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
             return {"ia":"Gemini","icono":"🔵","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
@@ -190,13 +191,14 @@ def gemini_mesa_fn(prompt_texto, temperatura=0.0, max_tokens=4000):
     import json as _json
     api_key=get_secret("GOOGLE_API_KEY")
     if not api_key: return f"Error: GOOGLE_API_KEY no encontrada en Streamlit Secrets."
-    url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+    headers={"Content-Type":"application/json","x-goog-api-key":api_key}
     payload={
         "contents":[{"parts":[{"text":prompt_texto}]}],
         "generationConfig":{"temperature":temperatura,"maxOutputTokens":max_tokens}
     }
     try:
-        r=req.post(url,headers={"Content-Type":"application/json"},json=payload,timeout=30)
+        r=req.post(GEMINI_URL,headers=headers,json=payload,timeout=30)
         if r.status_code==200:
             return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         return f"Error Gemini API (Status {r.status_code}): {r.text[:200]}"
@@ -286,10 +288,11 @@ def juez_fn(pregunta, respuestas):
     try:
         api_key = get_secret("GOOGLE_API_KEY")
         if api_key:
-            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+            GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+            headers_j={"Content-Type":"application/json","x-goog-api-key":api_key}
             payload={"contents":[{"parts":[{"text":prompt_juez}]}],
                      "generationConfig":{"temperature":0.3,"maxOutputTokens":1500}}
-            r=req.post(url,headers={"Content-Type":"application/json"},json=payload,timeout=30)
+            r=req.post(GEMINI_URL,headers=headers_j,json=payload,timeout=30)
             if r.status_code==200:
                 return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
     except: pass
@@ -302,10 +305,11 @@ def ia_generar(prompt, modelo="gemini-2.0-flash"):
     try:
         api_key=get_secret("GOOGLE_API_KEY")
         if not api_key: return groq_simple(prompt)
-        url=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
+        GEMINI_URL=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent"
+        headers_g={"Content-Type":"application/json","x-goog-api-key":api_key}
         payload={"contents":[{"parts":[{"text":CONTEXTO+"\n\n"+prompt}]}],
                  "generationConfig":{"temperature":0.7,"maxOutputTokens":1500}}
-        r=req.post(url,headers={"Content-Type":"application/json"},json=payload,timeout=30)
+        r=req.post(GEMINI_URL,headers=headers_g,json=payload,timeout=30)
         if r.status_code==200:
             return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         return groq_simple(prompt)
@@ -331,8 +335,9 @@ Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones."""
             mime = "application/pdf" if tipo=="pdf" else "image/jpeg"
             payload = {"contents":[{"parts":[{"text":prompt_json},{"inline_data":{"mime_type":mime,"data":b64}}]}],
                        "generationConfig":{"temperature":0.0,"maxOutputTokens":600}}
-            url_g=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
-            r = req.post(url_g, headers={"Content-Type":"application/json"}, json=payload, timeout=45)
+            GEMINI_URL_DOC="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+            headers_d={"Content-Type":"application/json","x-goog-api-key":api_key}
+            r = req.post(GEMINI_URL_DOC, headers=headers_d, json=payload, timeout=45)
             if r.status_code == 200:
                 txt = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
                 res = parsear_json(txt)
@@ -2010,7 +2015,8 @@ Texto libre (sin cuotas):
             st.markdown("---")
             st.markdown("### 📂 Bloques guardados")
             bloques=supa("futbol_bloques",filtro="?order=creado_en.desc") or []
-            for b in bloques[:8]:
+            if not isinstance(bloques,list): bloques=[]
+            for b in [x for x in bloques[:8] if isinstance(x,dict)]:
                 btn_lbl=f"⚽ {b.get('liga','')} — {b.get('jornada','')} ({b.get('n_partidos',0)} partidos)"
                 if st.button(btn_lbl,key=f"bl_{b['id']}",use_container_width=True):
                     parts=supa("futbol_partidos",filtro=f"?bloque_id=eq.{b['id']}") or []
