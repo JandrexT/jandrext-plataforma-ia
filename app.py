@@ -165,19 +165,50 @@ Tel: 317 391 0621 | proyectos@jandrext.com | Bogotá, Colombia
 Comportamiento: empático, profesional, práctico. Normas colombianas cuando aplique."""
 
 # ── IAs ───────────────────────────────────────────────────────────────────────
-def gemini_fn(p, modelo="gemini-2.0-flash"):
+def gemini_fn(p, modelo="gemini-2.0-flash", sistema=None):
+    """Gemini para Mesa General — key en URL, generationConfig correcto."""
     try:
         t=time.time()
         api_key=get_secret("GOOGLE_API_KEY")
         if not api_key: return {"ia":"Gemini","icono":"🔴","respuesta":"Sin API key","tiempo":0,"ok":False}
-        GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-        headers={"Content-Type":"application/json","x-goog-api-key":api_key}
-        payload={"contents":[{"parts":[{"text":CONTEXTO+"\n\nConsulta: "+p}]}]}
-        r=req.post(GEMINI_URL,headers=headers,json=payload,timeout=30)
+        url=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
+        sys_ctx=sistema if sistema else CONTEXTO
+        payload={
+            "contents":[{"parts":[{"text":sys_ctx+"\n\nConsulta: "+p}]}],
+            "generationConfig":{"temperature":0.7,"maxOutputTokens":1500}
+        }
+        r=req.post(url,headers={"Content-Type":"application/json"},json=payload,timeout=30)
         if r.status_code==200:
             txt=r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
             return {"ia":"Gemini","icono":"🔵","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
         return {"ia":"Gemini","icono":"🔴","respuesta":f"HTTP {r.status_code} | {r.text[:200]}","tiempo":0,"ok":False}
+    except Exception as e: return {"ia":"Gemini","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
+
+def gemini_mesa_fn(prompt_texto, temperatura=0.0, max_tokens=4000):
+    """Gemini REST nativo puro — sin CONTEXTO JandrexT. Retorna solo el texto.
+    Usado para parser de partidos y análisis deportivo sin contaminación corporativa."""
+    import json as _json
+    api_key=get_secret("GOOGLE_API_KEY")
+    if not api_key: return f"Error: GOOGLE_API_KEY no encontrada en Streamlit Secrets."
+    url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    payload={
+        "contents":[{"parts":[{"text":prompt_texto}]}],
+        "generationConfig":{"temperature":temperatura,"maxOutputTokens":max_tokens}
+    }
+    try:
+        r=req.post(url,headers={"Content-Type":"application/json"},json=payload,timeout=30)
+        if r.status_code==200:
+            return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        return f"Error Gemini API (Status {r.status_code}): {r.text[:200]}"
+    except Exception as e: return f"Error crítico Gemini: {type(e).__name__}: {str(e)[:200]}"
+
+def gemini_deporte_fn(p):
+    """Gemini para análisis deportivo — sin CONTEXTO corporativo, retorna dict estándar."""
+    try:
+        t=time.time()
+        txt=gemini_mesa_fn(p,temperatura=0.7,max_tokens=1500)
+        ok=not txt.startswith("Error")
+        return {"ia":"Gemini","icono":"🔵","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":ok}
     except Exception as e: return {"ia":"Gemini","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
 
 def groq_fn(p):
@@ -255,10 +286,10 @@ def juez_fn(pregunta, respuestas):
     try:
         api_key = get_secret("GOOGLE_API_KEY")
         if api_key:
-            GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-            headers={"Content-Type":"application/json","x-goog-api-key":api_key}
-            payload={"contents":[{"parts":[{"text":prompt_juez}]}]}
-            r=req.post(GEMINI_URL,headers=headers,json=payload,timeout=30)
+            url=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+            payload={"contents":[{"parts":[{"text":prompt_juez}]}],
+                     "generationConfig":{"temperature":0.3,"maxOutputTokens":1500}}
+            r=req.post(url,headers={"Content-Type":"application/json"},json=payload,timeout=30)
             if r.status_code==200:
                 return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
     except: pass
@@ -270,12 +301,11 @@ def juez_fn(pregunta, respuestas):
 def ia_generar(prompt, modelo="gemini-2.0-flash"):
     try:
         api_key=get_secret("GOOGLE_API_KEY")
-        if not api_key:
-            return groq_simple(prompt)
-        GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-        headers={"Content-Type":"application/json","x-goog-api-key":api_key}
-        payload={"contents":[{"parts":[{"text":CONTEXTO+"\n\n"+prompt}]}]}
-        r=req.post(GEMINI_URL,headers=headers,json=payload,timeout=30)
+        if not api_key: return groq_simple(prompt)
+        url=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent?key={api_key}"
+        payload={"contents":[{"parts":[{"text":CONTEXTO+"\n\n"+prompt}]}],
+                 "generationConfig":{"temperature":0.7,"maxOutputTokens":1500}}
+        r=req.post(url,headers={"Content-Type":"application/json"},json=payload,timeout=30)
         if r.status_code==200:
             return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         return groq_simple(prompt)
@@ -299,10 +329,10 @@ Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones."""
         api_key = get_secret("GOOGLE_API_KEY")
         if api_key:
             mime = "application/pdf" if tipo=="pdf" else "image/jpeg"
-            payload = {"contents":[{"parts":[{"text":prompt_json},{"inline_data":{"mime_type":mime,"data":b64}}]}]}
-            GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-            headers={"Content-Type":"application/json","x-goog-api-key":api_key}
-            r = req.post(GEMINI_URL, headers=headers, json=payload, timeout=45)
+            payload = {"contents":[{"parts":[{"text":prompt_json},{"inline_data":{"mime_type":mime,"data":b64}}]}],
+                       "generationConfig":{"temperature":0.0,"maxOutputTokens":600}}
+            url_g=f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+            r = req.post(url_g, headers={"Content-Type":"application/json"}, json=payload, timeout=45)
             if r.status_code == 200:
                 txt = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
                 res = parsear_json(txt)
@@ -801,32 +831,45 @@ def limpiar_texto_wplay(texto):
     texto=re.sub(r'\s+',' ',texto).strip()
     return texto
 
-def parser_regex_wplay(texto):
-    """Parser regex de respaldo: agrupa líneas equipo+cuota en tríos (local/empate/visitante)."""
+def parser_regex_wplay(texto_limpio):
+    """Parser regex principal (CAPA 1): recorre líneas con índice, detecta hora/fecha,
+    luego busca trío Equipo1+cuota / Empate+cuotaX / Equipo2+cuota2."""
     import re
     partidos=[]
-    lineas=[l.strip() for l in texto.split('\n') if l.strip()]
-    fecha_actual=""; hora_actual=""
-    fecha_pat=re.compile(r'(\d{1,2}:\d{2})\s+(\d{1,2}\s+\w+)')
-    cuota_pat=re.compile(r'^(.+?)\s+(\d+\.\d{1,2})\s*$')
-    buffer=[]
-    for l in lineas:
-        fm=fecha_pat.search(l)
-        if fm:
-            hora_actual=fm.group(1); fecha_actual=fm.group(2)
-            buffer=[]
-            continue
-        cm=cuota_pat.match(l)
-        if cm:
-            buffer.append({"nombre":cm.group(1).strip(),"cuota":float(cm.group(2))})
-        if len(buffer)==3:
-            local=buffer[0]["nombre"]; visitante=buffer[2]["nombre"]
-            if "empate" in buffer[1]["nombre"].lower():
-                partidos.append({"local":local,"visitante":visitante,
-                    "cuota_1":buffer[0]["cuota"],"cuota_x":buffer[1]["cuota"],
-                    "cuota_2":buffer[2]["cuota"],"fecha":fecha_actual,"hora":hora_actual,
-                    "fuente":"manual","cuotas_estimadas":False})
-            buffer=[]
+    lineas=[l.strip() for l in texto_limpio.split('\n') if l.strip()]
+    i=0
+    hora=""; fecha=""
+    while i < len(lineas):
+        # Detectar línea de hora y fecha (ej: "11:00 15 Jun")
+        if re.search(r'\d{1,2}:\d{2}',lineas[i]):
+            hm=re.search(r'(\d{1,2}:\d{2})',lineas[i])
+            fm=re.search(r'(\d{1,2}\s+\w+)',lineas[i])
+            if hm: hora=hm.group(1)
+            if fm: fecha=fm.group(1)
+            i+=1
+            if i>=len(lineas): break
+        # Buscar: Equipo1 + cuota1 (al final de línea)
+        m1=re.search(r'^(.+?)\s+([\d]+\.[\d]+)$',lineas[i])
+        if m1 and i+2<len(lineas):
+            equipo1=m1.group(1).strip(); cuota1=float(m1.group(2))
+            i+=1
+            # Buscar: Empate + cuotaX
+            mx=re.search(r'[Ee]mpate\s+([\d]+\.[\d]+)',lineas[i])
+            if mx:
+                cuotax=float(mx.group(1)); i+=1
+                # Buscar: Equipo2 + cuota2
+                m2=re.search(r'^(.+?)\s+([\d]+\.[\d]+)',lineas[i])
+                if m2:
+                    equipo2=m2.group(1).strip(); cuota2=float(m2.group(2))
+                    partidos.append({
+                        "local":equipo1,"visitante":equipo2,
+                        "cuota_1":cuota1,"cuota_x":cuotax,"cuota_2":cuota2,
+                        "hora":hora,"fecha":fecha,
+                        "fuente":"manual","cuotas_estimadas":False,
+                        "contexto_h2h":"","observacion":""
+                    })
+                    i+=1; continue
+        i+=1
     return partidos
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1863,42 +1906,48 @@ Texto libre (sin cuotas):
                 txt_val=st.session_state.get(f"ftbl_txt_m_{st.session_state.get('ftbl_mc',0)}",txt_m)
                 if not txt_val: txt_val=txt_m
                 if txt_val and txt_val.strip():
-                    # ── CORRECCIÓN 2: Limpiar texto antes de enviar a Gemini
+                    # Limpiar texto siempre primero
                     texto_limpio=limpiar_texto_wplay(txt_val)
-                    with st.spinner("🔍 Parseando partidos del texto..."):
+                    with st.spinner("🔍 Parseando partidos..."):
                         partidos_preview=[]
-                        # ── CAPA 1: Gemini (principal)
-                        pr_parse=(
-                            "Eres extractor de datos deportivos 1X2. "
-                            "Analiza este texto de casa de apuestas. "
-                            "El patrón es: Equipo1 + cuota1 / Empate + cuotaX / Equipo2 + cuota2. "
-                            "Ignora números sueltos mayores a 100 (son códigos de evento). "
-                            "Devuelve SOLO JSON sin explicación:\n"
-                            '[{{"local":"...","visitante":"...","cuota_1":1.0,'
-                            '"cuota_x":1.0,"cuota_2":1.0,"fecha":"","hora":"",'
-                            '"cuotas_estimadas":false}}]\n'
-                            "REGLAS:\n"
-                            "- Si no hay cuotas en el texto usa: cuota_1=2.00, cuota_x=3.20, cuota_2=3.50 y cuotas_estimadas=true\n"
-                            "- Siempre float, nunca strings para cuotas\n"
-                            "- Extrae TODOS los partidos del texto\n\n"
-                            f"Texto limpio:\n{texto_limpio}"
-                        )
-                        res_parse=gemini_fn(pr_parse,modelo="gemini-2.0-flash")
-                        if not res_parse.get("ok"):
-                            st.warning(f"⚠️ Gemini parser falló: {res_parse.get('respuesta','Error desconocido')[:120]}. Usando parser de respaldo...")
-                        else:
-                            raw=res_parse.get("respuesta","[]").strip()
-                            if raw.startswith("```"): raw=raw.split("```")[1].lstrip("json").strip()
-                            if raw.endswith("```"): raw=raw[:-3].strip()
-                            try:
-                                partidos_preview=json.loads(raw)
-                                if not isinstance(partidos_preview,list): partidos_preview=[]
-                            except: partidos_preview=[]
-                        # ── CAPA 2: Fallback regex si Gemini falla o retorna vacío
-                        if not partidos_preview:
-                            partidos_preview=parser_regex_wplay(texto_limpio)
+
+                        # ── CAPA 1: Regex (rápido, sin costo, sin red)
+                        partidos_preview=parser_regex_wplay(texto_limpio)
+                        if partidos_preview:
+                            st.success(f"✅ Regex extrajo {len(partidos_preview)} partido(s)")
+
+                        # ── CAPA 2: Gemini REST nativo (solo si regex < 3 partidos)
+                        if len(partidos_preview)<3:
                             if partidos_preview:
-                                st.info(f"✅ Parser de respaldo extrajo {len(partidos_preview)} partidos")
+                                st.info(f"🔄 Regex extrajo solo {len(partidos_preview)} — ampliando con Gemini...")
+                            else:
+                                st.info("🔄 Regex no extrajo partidos — intentando con Gemini...")
+                            pr_parse=(
+                                "Eres extractor de datos deportivos 1X2.\n"
+                                "Analiza este texto de casa de apuestas.\n"
+                                "Patrón: Equipo1 + cuota1 / Empate + cuotaX / Equipo2 + cuota2.\n"
+                                "Ignora números solos mayores a 100 (son códigos de evento).\n"
+                                "Devuelve SOLO JSON sin explicación ni markdown:\n"
+                                '[{"local":"...","visitante":"...","cuota_1":1.0,'
+                                '"cuota_x":1.0,"cuota_2":1.0,"fecha":"","hora":"",'
+                                '"fuente":"manual","cuotas_estimadas":false,'
+                                '"contexto_h2h":"","observacion":""}]\n\n'
+                                f"Texto limpio:\n{texto_limpio}"
+                            )
+                            raw_gemini=gemini_mesa_fn(pr_parse,temperatura=0.0,max_tokens=4000)
+                            if raw_gemini.startswith("Error"):
+                                st.warning(f"⚠️ Gemini parser: {raw_gemini[:120]}")
+                            else:
+                                raw=raw_gemini.strip()
+                                if raw.startswith("```"): raw=raw.split("```")[1].lstrip("json").strip()
+                                if raw.endswith("```"): raw=raw[:-3].strip()
+                                try:
+                                    g_partidos=json.loads(raw)
+                                    if isinstance(g_partidos,list) and len(g_partidos)>len(partidos_preview):
+                                        partidos_preview=g_partidos
+                                        st.success(f"✅ Gemini extrajo {len(partidos_preview)} partido(s)")
+                                except:
+                                    pass
                     if partidos_preview:
                         st.session_state["ftbl_partidos_preview"]=partidos_preview
                         st.session_state["ftbl_liga_preview"]=liga_m
@@ -2154,8 +2203,8 @@ Texto libre (sin cuotas):
                                 if ia_nombre=="ChatGPT": r=openai_fn(prompt_ia)
                                 elif ia_nombre=="Claude": r=claude_fn(prompt_ia)
                                 elif ia_nombre=="Gemini":
-                                    r=gemini_fn(prompt_ia)
-                                    # CORRECCIÓN 5: fail-safe Gemini
+                                    # gemini_deporte_fn: REST nativo SIN CONTEXTO JandrexT
+                                    r=gemini_deporte_fn(prompt_ia)
                                     if not r.get("ok"):
                                         r={"ia":"Gemini","icono":"🔵","respuesta":"Gemini no disponible en este análisis.","ok":False,"tiempo":0}
                                 elif ia_nombre=="Groq": r=groq_fn(prompt_ia)
@@ -2184,16 +2233,17 @@ Texto libre (sin cuotas):
                             for ia in ias_futbol
                         ])
                         sint_fut_prompt=(
-                            f"Eres el árbitro del Laboratorio Fútbol 1X2. "
-                            f"Liga: {liga_act} | Jornada: {jor_act}\n\n"
-                            f"5 IAs analizaron las top {top_n} rutas. Aquí sus análisis:\n{resp_texts}\n\n"
-                            "Sintetiza:\n"
-                            "1. **RUTA RECOMENDADA** (número y estrategia)\n"
-                            "2. **CONFIANZA** (Verde=alta/Amarillo=media/Rojo=baja) y por qué\n"
-                            "3. **PICKS MÁS SEGUROS** — qué predicciones coinciden la mayoría de IAs\n"
-                            "4. **ADVERTENCIA** — qué pick tiene más riesgo\n\n"
-                            "Máximo 250 palabras. Sé directo."
+                            "MODO: ÁRBITRO DE ANÁLISIS DEPORTIVO PURO — Football Lab 1X2\n"
+                            f"Competición: {liga_act} | Jornada: {jor_act}\n\n"
+                            f"{len(ias_ok)} IAs analizaron las top {top_n} rutas. Sus análisis:\n{resp_texts}\n\n"
+                            "Sintetiza exclusivamente sobre apuestas deportivas:\n"
+                            "1. **RUTA RECOMENDADA** (número y estrategia con mayor consenso)\n"
+                            "2. **CONFIANZA** (🟢 Alta ≥4 IAs / 🟡 Media 3 / 🔴 Baja <3) con razón breve\n"
+                            "3. **PICKS MÁS SEGUROS** — predicciones en que coincide la mayoría\n"
+                            "4. **RIESGO OCULTO** — pick más peligroso del parlay y por qué\n\n"
+                            "Máximo 250 palabras. Solo análisis deportivo. Sin mencionar empresas ni contextos ajenos."
                         )
+                        # Síntesis con Claude usando system prompt deportivo (no corporativo)
                         sint_fut=claude_fn(sint_fut_prompt)
 
                         # ── MAPA DE COINCIDENCIAS (qué IAs coinciden en cada pick)
@@ -2284,7 +2334,7 @@ Texto libre (sin cuotas):
                             st.markdown(picks_md)
                             st.caption(f"IAs en consenso: {n_ias_acuerdo}/5 | {consenso}")
 
-                            # TICKET COPIABLE
+                            # TICKET COPIABLE PARA WPLAY
                             if idx==0:
                                 st.markdown("#### 🎟️ Ticket Parlay para Wplay")
                             ticket_lines=[
@@ -2300,7 +2350,7 @@ Texto libre (sin cuotas):
                             ticket_lines+=[
                                 "━━━━━━━━━━━━━━━━━━━━━━━",
                                 f"💰 Apuesta $1.000 → Retorno: ${1000*r['cuota_total']:,.0f}",
-                                f"🧠 Mesa IA JandrexT | {consenso}",
+                                f"🧠 Football Lab JandrexT | {consenso}",
                                 f"📱 jandrext-ia.streamlit.app"
                             ]
                             ticket_txt="\n".join(ticket_lines)
@@ -2317,12 +2367,16 @@ Texto libre (sin cuotas):
                             with st.expander(f"{ico_map2.get(ia,'🤖')} {ia} {ok_txt} ({t_ia:.1f}s)"):
                                 st.write(res.get("respuesta","Sin respuesta"))
 
-                    # ── Síntesis final visible
+                    # ── Síntesis final
                     st.markdown("---")
                     st.markdown("### 🎯 Síntesis del Consejo IA")
                     sint_ok=sint_fut.get("ok") if isinstance(sint_fut,dict) else False
                     if sint_ok:
                         st.markdown(sint_fut.get("respuesta",""))
                     else:
-                        st.info("Síntesis no disponible. Revisa los análisis individuales arriba.")
-
+                        mejor=max(resp_futbol.values(),key=lambda x:len(x.get("respuesta","")) if x.get("ok") else 0,default={})
+                        if mejor.get("ok"):
+                            st.info(f"Síntesis via {mejor['ia']}:")
+                            st.markdown(mejor.get("respuesta",""))
+                        else:
+                            st.info("Síntesis no disponible. Revisa los análisis individuales arriba.")
