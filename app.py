@@ -1956,7 +1956,7 @@ elif sec=="mesa_ia" and rol=="admin":
                 else:
                     with st.spinner("Consultando Football-Data.org..."):
                         try:
-                            params_fd={"season":temp_f}
+                            params_fd={"season":int(temp_f)}
                             if liga_f!="WC": params_fd["matchday"]=int(jornada_f)
                             r_fd=req.get(f"https://api.football-data.org/v4/competitions/{liga_f}/matches",
                                 params=params_fd,
