@@ -934,7 +934,7 @@ def generar_150_rutas_ftbl(partidos):
     return rutas
 
 def gemini_hipotesis_ftbl(ruta_num,estrategia,preds,conf):
-    gkey=get_secret("GEMINI_API_KEY")
+    gkey=get_secret("GEMINI_API_KEY") or get_secret("GEMINI_KEY") or get_secret("gemini_api_key")
     if not gkey: return f"Ruta {ruta_num} | {estrategia} | {conf}%"
     try:
         resumen="; ".join([f"{p.get('partido','')} {p.get('pred','')}({p.get('conf',0)}%)" for p in preds[:4]])
@@ -1990,12 +1990,12 @@ elif sec=="mesa_ia" and rol=="admin":
             with st.expander("📋 Pegar partidos manualmente (Mundial, scraping, cualquier fuente)"):
                 txt_m=st.text_area("Pega aquí los partidos (un partido por línea)",height=180,placeholder="Ej:\nEngland vs Spain\nFrance vs Germany\nBrazil vs Argentina",key="ftbl_txt_m")
                 c_lm,c_jm=st.columns(2)
-                liga_m=c_lm.selectbox("Liga/Torneo",list(LIGAS_F.keys()),format_func=lambda x:LIGAS_F[x],key="liga_m")
+                liga_m=c_lm.text_input("Liga/Torneo","Mundial 2026",key="liga_m")
                 jornada_m=c_jm.number_input("Jornada/Fase",1,100,1,key="jornada_m")
                 if st.button("🤖 Parsear con IA y generar 150 rutas",type="primary",use_container_width=True,key="ftbl_manual"):
                     if not txt_m.strip(): st.warning("Pega la información de partidos primero.")
                     else:
-                        gkey=get_secret("GEMINI_API_KEY")
+                        gkey=get_secret("GEMINI_API_KEY") or get_secret("GEMINI_KEY") or get_secret("gemini_api_key")
                         if not gkey: st.error("GEMINI_API_KEY no configurada.")
                         else:
                             with st.spinner("🤖 Gemini parseando partidos..."):
@@ -2010,7 +2010,7 @@ elif sec=="mesa_ia" and rol=="admin":
                             if not partidos_m: st.error("No se pudieron extraer partidos del texto.")
                             else:
                                 bid_m=str(uuid.uuid4())
-                                supa("futbol_bloques","POST",{"id":bid_m,"user_id":u["id"],"liga":LIGAS_F.get(liga_m,liga_m),"jornada":int(jornada_m),"temporada":2026,"status":"manual"})
+                                supa("futbol_bloques","POST",{"id":bid_m,"user_id":u["id"],"liga":liga_m,"jornada":int(jornada_m),"temporada":2026,"status":"manual"})
                                 for pm in partidos_m:
                                     supa("futbol_partidos","POST",{"bloque_id":bid_m,"local":pm.get("local",""),"visitante":pm.get("visitante",""),"fecha":"","posicion_local":8,"posicion_visitante":8,"cuota_1":float(pm.get("cuota_1",2.0)),"cuota_x":float(pm.get("cuota_x",3.5)),"cuota_2":float(pm.get("cuota_2",3.0)),"forma_local":2,"forma_visitante":2})
                                 st.session_state["ftbl_bloque_sel"]=bid_m
