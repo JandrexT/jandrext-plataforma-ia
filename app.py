@@ -1944,7 +1944,7 @@ elif sec=="mesa_ia" and rol=="admin":
         bloques_ftbl=supa("futbol_bloques",filtro=f"?user_id=eq.{u['id']}&order=created_at.desc") or []
         tab_c,tab_r,tab_a=st.tabs(["📥 Cargar Bloque","🧮 150 Rutas","📊 Resultados"])
         with tab_c:
-            LIGAS_F={"PL":"Premier League","PD":"La Liga","BL1":"Bundesliga","SA":"Serie A","FL1":"Ligue 1","WC":"Mundial 2026"}
+            LIGAS_F={"PL":"Premier League","PD":"La Liga","BL1":"Bundesliga","SA":"Serie A","FL1":"Ligue 1"}
             cl1f,cl2f,cl3f=st.columns([2,1,1])
             liga_f=cl1f.selectbox("Liga",list(LIGAS_F.keys()),format_func=lambda x:LIGAS_F[x],key="ftbl_liga")
             jornada_f=cl2f.number_input("Jornada",1,38,1,key="ftbl_jornada")
@@ -1957,7 +1957,7 @@ elif sec=="mesa_ia" and rol=="admin":
                     with st.spinner("Consultando Football-Data.org..."):
                         try:
                             params_fd={"season":int(temp_f)}
-                            if liga_f!="WC": params_fd["matchday"]=int(jornada_f)
+                            params_fd["matchday"]=int(jornada_f)
                             r_fd=req.get(f"https://api.football-data.org/v4/competitions/{liga_f}/matches",
                                 params=params_fd,
                                 headers={"X-Auth-Token":fkey},timeout=15)
