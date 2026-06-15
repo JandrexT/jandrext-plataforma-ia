@@ -1950,15 +1950,23 @@ elif sec=="mesa_ia" and rol=="admin":
             jornada_f=cl2f.number_input("Jornada",1,38,1,key="ftbl_jornada")
             temp_f=cl3f.text_input("Temporada","2024",key="ftbl_temp")
             if st.button("📥 Cargar partidos (Football-Data.org)",type="primary",use_container_width=True,key="ftbl_load"):
-                with st.spinner("Consultando Football-Data.org..."):
-                    fkey=get_secret("FOOTBALL_API_KEY"); data_fd=None
-                    if fkey:
+                fkey=get_secret("FOOTBALL_API_KEY"); data_fd=None; err_fd=""
+                if not fkey:
+                    st.error("❌ FOOTBALL_API_KEY no encontrada en Secrets.")
+                else:
+                    with st.spinner("Consultando Football-Data.org..."):
                         try:
+                            params_fd={"season":temp_f}
+                            if liga_f!="WC": params_fd["matchday"]=int(jornada_f)
                             r_fd=req.get(f"https://api.football-data.org/v4/competitions/{liga_f}/matches",
-                                params={"matchday":int(jornada_f),"season":temp_f},
+                                params=params_fd,
                                 headers={"X-Auth-Token":fkey},timeout=15)
-                            if r_fd.status_code==200: data_fd=r_fd.json()
-                        except: pass
+                            if r_fd.status_code==200:
+                                data_fd=r_fd.json()
+                            else:
+                                err_fd=f"HTTP {r_fd.status_code}: {r_fd.text[:300]}"
+                        except Exception as e_fd:
+                            err_fd=f"Excepcion: {str(e_fd)[:200]}"
                 if data_fd and "matches" in data_fd:
                     matches_fd=data_fd["matches"][:20]; bid_new=str(uuid.uuid4())
                     supa("futbol_bloques","POST",{"id":bid_new,"user_id":u["id"],"liga":LIGAS_F[liga_f],"jornada":int(jornada_f),"temporada":temp_f,"status":"cargado"})
@@ -1966,8 +1974,8 @@ elif sec=="mesa_ia" and rol=="admin":
                         supa("futbol_partidos","POST",{"bloque_id":bid_new,"local":m_fd["homeTeam"]["name"],"visitante":m_fd["awayTeam"]["name"],"fecha":m_fd.get("utcDate",""),"posicion_local":8,"posicion_visitante":8,"cuota_1":2.0,"cuota_x":3.5,"cuota_2":3.0,"forma_local":2,"forma_visitante":2})
                     st.session_state["ftbl_bloque_sel"]=bid_new
                     st.success(f"✅ {len(matches_fd)} partidos cargados — {LIGAS_F[liga_f]} J{jornada_f}"); st.rerun()
-                else:
-                    st.error("❌ No se pudo cargar. Verifica FOOTBALL_API_KEY en Secrets.")
+                elif fkey:
+                    st.error(f"❌ {err_fd}" if err_fd else "❌ API no devolvio partidos. Verifica liga/jornada/temporada.")
             if bloques_ftbl:
                 st.markdown("---"); st.caption("Bloques guardados")
                 for b_ftbl in bloques_ftbl:
