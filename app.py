@@ -775,6 +775,61 @@ def panel_consulta(chat_id, ctx="General"):
     elif btn: st.warning("⚠️ Escribe o dicta una consulta.")
 
 # ══════════════════════════════════════════════════════════════════════════════
+# UTILIDADES FOOTBALL LAB — Correcciones 1/2/3
+# ══════════════════════════════════════════════════════════════════════════════
+
+def detectar_texto_futbol_1x2(texto):
+    """Detecta automáticamente si el texto pegado contiene partidos/cuotas deportivas."""
+    import re
+    if not texto: return False
+    t=texto.lower()
+    kw=["empate","mundial","group","grupo","octavos","cuartos","semifinal","final",
+        "copa","league","premier","liga","bundesliga","serie a","ligue","mls",
+        "wplay","betplay","codere","1x2","parlay","apuesta"]
+    if any(k in t for k in kw): return True
+    decimals=re.findall(r'\b\d+\.\d{1,2}\b',texto)
+    if len(decimals)>=3: return True
+    if '★' in texto and re.search(r'\d+\.\d{2}',texto): return True
+    return False
+
+def limpiar_texto_wplay(texto):
+    """Elimina ★, códigos de evento y artefactos de navegación del texto de Wplay."""
+    import re
+    texto=texto.replace("★","").replace("⭐","")
+    texto=re.sub(r'\b[2-9]\d{2,}\b','',texto)
+    texto=re.sub(r'P[aá]gina ant\.?|Siguiente p[aá]gina|\d+\s*/\s*\d+','',texto,flags=re.IGNORECASE)
+    texto=re.sub(r'\s+',' ',texto).strip()
+    return texto
+
+def parser_regex_wplay(texto):
+    """Parser regex de respaldo: agrupa líneas equipo+cuota en tríos (local/empate/visitante)."""
+    import re
+    partidos=[]
+    lineas=[l.strip() for l in texto.split('\n') if l.strip()]
+    fecha_actual=""; hora_actual=""
+    fecha_pat=re.compile(r'(\d{1,2}:\d{2})\s+(\d{1,2}\s+\w+)')
+    cuota_pat=re.compile(r'^(.+?)\s+(\d+\.\d{1,2})\s*$')
+    buffer=[]
+    for l in lineas:
+        fm=fecha_pat.search(l)
+        if fm:
+            hora_actual=fm.group(1); fecha_actual=fm.group(2)
+            buffer=[]
+            continue
+        cm=cuota_pat.match(l)
+        if cm:
+            buffer.append({"nombre":cm.group(1).strip(),"cuota":float(cm.group(2))})
+        if len(buffer)==3:
+            local=buffer[0]["nombre"]; visitante=buffer[2]["nombre"]
+            if "empate" in buffer[1]["nombre"].lower():
+                partidos.append({"local":local,"visitante":visitante,
+                    "cuota_1":buffer[0]["cuota"],"cuota_x":buffer[1]["cuota"],
+                    "cuota_2":buffer[2]["cuota"],"fecha":fecha_actual,"hora":hora_actual,
+                    "fuente":"manual","cuotas_estimadas":False})
+            buffer=[]
+    return partidos
+
+# ══════════════════════════════════════════════════════════════════════════════
 # INICIO — DASHBOARD CON NAOMI ❤️
 # ══════════════════════════════════════════════════════════════════════════════
 if sec=="inicio":
@@ -1627,9 +1682,6 @@ elif sec=="mis_manuales" and u.get("role")=="cliente":
                 file_name=f"Manual_{m['id'][:6]}.html",mime="text/html",key=f"cm_{m['id']}")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# MESA IA — CONSEJO DE INTELIGENCIA + LABORATORIO FÚTBOL 1X2
-# ══════════════════════════════════════════════════════════════════════════════
 elif sec=="mesa_ia":
     # ── Modo actual (general | futbol)
     if "mesa_modo" not in st.session_state: st.session_state["mesa_modo"]="general"
@@ -1678,6 +1730,13 @@ elif sec=="mesa_ia":
 
         pregunta=st.chat_input("¿Qué quieres que analice el Consejo?")
         if pregunta:
+            # ── CORRECCIÓN 1: Detectar texto de fútbol → redirigir a Football Lab
+            if detectar_texto_futbol_1x2(pregunta):
+                st.session_state["mesa_modo"]="futbol"
+                st.session_state["ftbl_texto_pendiente"]=pregunta
+                st.info("⚽ **Partidos detectados → Football Lab activado automáticamente**")
+                st.rerun()
+
             hist_gen.append({"role":"user","content":pregunta})
             with st.chat_message("user"): st.markdown(pregunta)
             with st.spinner("🧠 Convocando al Consejo... (5 IAs en paralelo)"):
@@ -1765,9 +1824,15 @@ Sé directo, concreto y accionable. Máximo 400 palabras."""
             liga_m=st.text_input("🏆 Liga / Competición","Mundial 2026",key="ftbl_liga")
             jornada_m=st.text_input("📅 Fase / Jornada","Fase de Grupos",key="ftbl_jor")
 
+            # ── CORRECCIÓN 1: Usar texto pendiente si viene de Mesa General
+            texto_pendiente=st.session_state.pop("ftbl_texto_pendiente",None)
+            if texto_pendiente:
+                st.success("⚽ Texto de Mesa General redirigido aquí automáticamente")
+
             txt_m=st.text_area(
                 "📋 Pega aquí los partidos",
                 height=260,
+                value=texto_pendiente or "",
                 key=f"ftbl_txt_m_{st.session_state.get('ftbl_mc',0)}",
                 placeholder="""Ejemplos de formatos aceptados:
 
@@ -1796,39 +1861,50 @@ Texto libre (sin cuotas):
 
             if btn_parsear:
                 txt_val=st.session_state.get(f"ftbl_txt_m_{st.session_state.get('ftbl_mc',0)}",txt_m)
+                if not txt_val: txt_val=txt_m
                 if txt_val and txt_val.strip():
-                    with st.spinner("🔍 Gemini extrayendo partidos del texto..."):
-                        # Parser universal: Gemini temperature=0.0
+                    # ── CORRECCIÓN 2: Limpiar texto antes de enviar a Gemini
+                    texto_limpio=limpiar_texto_wplay(txt_val)
+                    with st.spinner("🔍 Parseando partidos del texto..."):
+                        partidos_preview=[]
+                        # ── CAPA 1: Gemini (principal)
                         pr_parse=(
-                            "Eres un extractor de datos deportivos. Analiza el siguiente texto y extrae "
-                            "TODOS los partidos de fútbol mencionados.\n"
-                            "Devuelve SOLO un JSON array sin explicación ni markdown:\n"
-                            '[{{"local":"Equipo Local","visitante":"Equipo Visitante",'
-                            '"cuota_1":1.50,"cuota_x":3.50,"cuota_2":5.00}}]\n\n'
+                            "Eres extractor de datos deportivos 1X2. "
+                            "Analiza este texto de casa de apuestas. "
+                            "El patrón es: Equipo1 + cuota1 / Empate + cuotaX / Equipo2 + cuota2. "
+                            "Ignora números sueltos mayores a 100 (son códigos de evento). "
+                            "Devuelve SOLO JSON sin explicación:\n"
+                            '[{{"local":"...","visitante":"...","cuota_1":1.0,'
+                            '"cuota_x":1.0,"cuota_2":1.0,"fecha":"","hora":"",'
+                            '"cuotas_estimadas":false}}]\n'
                             "REGLAS:\n"
-                            "- Si no hay cuotas en el texto, usa: cuota_1=2.00, cuota_x=3.20, cuota_2=3.50\n"
-                            "- Siempre números decimales (float), nunca strings\n"
-                            "- local y visitante siempre en el idioma del texto original\n"
-                            "- Extrae TODOS los partidos que veas, incluso si el formato es inconsistente\n\n"
-                            f"TEXTO:\n{txt_val}"
+                            "- Si no hay cuotas en el texto usa: cuota_1=2.00, cuota_x=3.20, cuota_2=3.50 y cuotas_estimadas=true\n"
+                            "- Siempre float, nunca strings para cuotas\n"
+                            "- Extrae TODOS los partidos del texto\n\n"
+                            f"Texto limpio:\n{texto_limpio}"
                         )
                         res_parse=gemini_fn(pr_parse,modelo="gemini-2.0-flash")
-                        raw=res_parse.get("respuesta","[]")
-                        # Limpiar posible markdown
-                        raw=raw.strip()
-                        if raw.startswith("```"): raw=raw.split("```")[1].lstrip("json").strip()
-                        if raw.endswith("```"): raw=raw[:-3].strip()
-                        try:
-                            partidos_preview=json.loads(raw)
-                            if not isinstance(partidos_preview,list): partidos_preview=[]
-                        except:
-                            partidos_preview=[]
+                        if not res_parse.get("ok"):
+                            st.warning(f"⚠️ Gemini parser falló: {res_parse.get('respuesta','Error desconocido')[:120]}. Usando parser de respaldo...")
+                        else:
+                            raw=res_parse.get("respuesta","[]").strip()
+                            if raw.startswith("```"): raw=raw.split("```")[1].lstrip("json").strip()
+                            if raw.endswith("```"): raw=raw[:-3].strip()
+                            try:
+                                partidos_preview=json.loads(raw)
+                                if not isinstance(partidos_preview,list): partidos_preview=[]
+                            except: partidos_preview=[]
+                        # ── CAPA 2: Fallback regex si Gemini falla o retorna vacío
+                        if not partidos_preview:
+                            partidos_preview=parser_regex_wplay(texto_limpio)
+                            if partidos_preview:
+                                st.info(f"✅ Parser de respaldo extrajo {len(partidos_preview)} partidos")
                     if partidos_preview:
                         st.session_state["ftbl_partidos_preview"]=partidos_preview
                         st.session_state["ftbl_liga_preview"]=liga_m
                         st.session_state["ftbl_jor_preview"]=jornada_m
                     else:
-                        st.error("❌ Gemini no pudo extraer partidos. Revisa el texto o agrega más contexto.")
+                        st.error("❌ No se pudieron extraer partidos. Verifica el formato del texto.")
 
             # Preview antes de confirmar
             preview=st.session_state.get("ftbl_partidos_preview",[])
@@ -2018,26 +2094,50 @@ Texto libre (sin cuotas):
                             for i,r in enumerate(top_rutas)
                         ])
 
+                        # ── CORRECCIÓN 4: Prompts deportivos puros (sin CONTEXTO JandrexT)
+                        BASE_DEPORTE=(
+                            "MODO ANÁLISIS DEPORTIVO PURO — Mundial 2026.\n"
+                            "Ignora cualquier contexto previo no deportivo. "
+                            "Eres un analista experto en apuestas deportivas 1X2.\n"
+                        )
                         roles_futbol={
                             "ChatGPT":(
-                                "Eres el estratega de apuestas. Para cada ruta, evalúa si la estrategia tiene sentido "
-                                "matemáticamente. Recomienda las 3 mejores con justificación de valor esperado."
+                                BASE_DEPORTE+
+                                "ROL: Generador de predicciones y combinaciones.\n"
+                                "Propón predicciones 1/X/2 por partido con justificación breve. "
+                                "Identifica las mejores combinaciones para parlay con mayor valor esperado. "
+                                "Recomienda las 3 rutas con mejor balance cuota/confianza."
                             ),
                             "Claude":(
-                                "Eres el auditor de riesgo. Para cada ruta, identifica los picks más débiles "
-                                "(alta cuota = menor probabilidad real). Señala qué partido podría arruinar cada parlay."
+                                BASE_DEPORTE+
+                                "ROL: Auditor de riesgos y partidos trampa.\n"
+                                "Detecta partidos trampa y riesgos ocultos en las rutas. "
+                                "¿Cuáles picks evitarías en un parlay y por qué? "
+                                "Indica riesgo por partido: bajo/medio/alto. "
+                                "Señala qué pick podría arruinar cada combinación."
                             ),
                             "Gemini":(
-                                "Eres el contextualizador. Para cada ruta, analiza si los equipos locales/visitantes "
-                                "tienen historial favorable para esa predicción. Ordena las rutas por confianza contextual."
+                                BASE_DEPORTE+
+                                "ROL: Contextualizador Mundial 2026.\n"
+                                "Aporta contexto del Mundial 2026: fase del torneo, "
+                                "historial H2H conocido, motivaciones de cada selección, "
+                                "favoritismo real más allá de las cuotas. "
+                                "Ordena las rutas por confianza contextual."
                             ),
                             "Groq":(
-                                "Eres el analista rápido. Califica cada ruta de 1-10 según cuota:riesgo. "
-                                "Top 3 en una línea cada una. Sé conciso."
+                                BASE_DEPORTE+
+                                "ROL: Análisis rápido y rankings.\n"
+                                "Identifica los 5 partidos más predecibles de la selección. "
+                                "Una línea por partido: equipo + 1/X/2 + razón. "
+                                "Califica cada ruta de 1-10 según cuota:riesgo. Sé conciso."
                             ),
                             "Mistral":(
-                                "Eres la perspectiva alternativa. Señala qué rutas van CONTRA la tendencia obvia "
-                                "y cuáles podrían tener valor oculto. Recomienda la ruta más inesperada con mejor EV."
+                                BASE_DEPORTE+
+                                "ROL: Perspectiva alternativa y valor oculto.\n"
+                                "¿Dónde están las cuotas subvaloradas? "
+                                "¿Qué empates son estructuralmente probables? "
+                                "¿Algún visitante con valor real? "
+                                "Señala qué rutas van CONTRA la tendencia obvia con mejor EV."
                             )
                         }
 
@@ -2045,16 +2145,24 @@ Texto libre (sin cuotas):
                             rol=roles_futbol.get(ia_nombre,"")
                             prompt_ia=(
                                 f"{rol}\n\n"
-                                f"PARTIDOS DISPONIBLES ({liga_act} — {jor_act}):\n{partidos_str}\n\n"
+                                f"PARTIDOS ({liga_act} — {jor_act}):\n{partidos_str}\n\n"
                                 f"TOP {top_n} RUTAS GENERADAS:\n{rutas_str}\n\n"
-                                "Analiza y responde en máximo 300 palabras."
+                                "Analiza y responde en máximo 300 palabras. "
+                                "No menciones contextos empresariales, solo análisis deportivo."
                             )
-                            if ia_nombre=="ChatGPT": r=openai_fn(prompt_ia)
-                            elif ia_nombre=="Claude": r=claude_fn(prompt_ia)
-                            elif ia_nombre=="Gemini": r=gemini_fn(prompt_ia)
-                            elif ia_nombre=="Groq": r=groq_fn(prompt_ia)
-                            elif ia_nombre=="Mistral": r=mistral_fn(prompt_ia)
-                            else: r={"ia":ia_nombre,"respuesta":"No disponible","ok":False,"tiempo":0}
+                            try:
+                                if ia_nombre=="ChatGPT": r=openai_fn(prompt_ia)
+                                elif ia_nombre=="Claude": r=claude_fn(prompt_ia)
+                                elif ia_nombre=="Gemini":
+                                    r=gemini_fn(prompt_ia)
+                                    # CORRECCIÓN 5: fail-safe Gemini
+                                    if not r.get("ok"):
+                                        r={"ia":"Gemini","icono":"🔵","respuesta":"Gemini no disponible en este análisis.","ok":False,"tiempo":0}
+                                elif ia_nombre=="Groq": r=groq_fn(prompt_ia)
+                                elif ia_nombre=="Mistral": r=mistral_fn(prompt_ia)
+                                else: r={"ia":ia_nombre,"respuesta":"No disponible","ok":False,"tiempo":0}
+                            except Exception as e_ia:
+                                r={"ia":ia_nombre,"respuesta":f"Error: {str(e_ia)[:80]}","ok":False,"tiempo":0}
                             r["ia"]=ia_nombre
                             return r
 
@@ -2062,6 +2170,13 @@ Texto libre (sin cuotas):
                         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
                             futs={ex.submit(_run_ia_futbol,ia):ia for ia in ias_futbol}
                             resp_futbol={ia:f.result() for f,ia in [(f,futs[f]) for f in concurrent.futures.as_completed(futs)]}
+
+                        # ── CORRECCIÓN 5: Mostrar aviso si Gemini falló
+                        ias_fallidas=[ia for ia in ias_futbol if not resp_futbol[ia].get("ok")]
+                        ias_ok=[ia for ia in ias_futbol if resp_futbol[ia].get("ok")]
+                        if "Gemini" in ias_fallidas:
+                            n_ok=len(ias_ok)
+                            st.warning(f"⚠️ Gemini no disponible. Análisis con {n_ok} IAs: {', '.join(ias_ok)}")
 
                         # ── SÍNTESIS CONSENSO (Claude)
                         resp_texts="\n\n".join([
@@ -2192,93 +2307,22 @@ Texto libre (sin cuotas):
                             st.code(ticket_txt,language=None)
                             st.caption("☝️ Selecciona todo el texto y copia (Ctrl+A / Cmd+A)")
 
-                    # Análisis completos de cada IA
+                    # ── Análisis completos de cada IA
                     with st.expander("🔬 Ver análisis completos de cada IA"):
                         ico_map2={"ChatGPT":"🟢","Claude":"🟤","Gemini":"🔵","Groq":"🟡","Mistral":"🟣"}
-                        for ia in ["ChatGPT","Claude","Gemini","Groq","Mistral"]:
-                            r=resp_futbol.get(ia,{})
-                            st.markdown(f"**{ico_map2.get(ia,'⚪')} {ia}** ({r.get('tiempo',0):.1f}s)")
-                            st.markdown(r.get("respuesta","Sin respuesta"))
-                            st.markdown("---")
+                        for ia in ias_futbol:
+                            res=resp_futbol.get(ia,{})
+                            ok_txt="✅" if res.get("ok") else "❌"
+                            t_ia=res.get("tiempo",0)
+                            with st.expander(f"{ico_map2.get(ia,'🤖')} {ia} {ok_txt} ({t_ia:.1f}s)"):
+                                st.write(res.get("respuesta","Sin respuesta"))
 
-                    # Botón archivar en Biblioteca
+                    # ── Síntesis final visible
                     st.markdown("---")
-                    if st.button("📚 Archivar análisis en Biblioteca",use_container_width=True):
-                        arch_data={
-                            "bloque_id":st.session_state.get("ftbl_bloque_id",""),
-                            "liga":liga_act,"jornada":jor_act,
-                            "n_partidos":len(partidos_act),
-                            "n_rutas":len(rutas_150),
-                            "top_ruta":rutas_150[0] if rutas_150 else {},
-                            "sintesis":sint_txt[:1000],
-                            "creado_por":u["id"]
-                        }
-                        supa("ftbl_biblioteca","POST",arch_data)
-                        st.success("✅ Análisis archivado en Biblioteca")
-
-        # ────────────────────────────────────────────────────────────────
-        # TAB 3 — RESULTADOS
-        # ────────────────────────────────────────────────────────────────
-        with tab_f3:
-            st.markdown("### 📈 Registrar Resultados Reales")
-            partidos_res=st.session_state.get("ftbl_partidos_activos",[])
-            rutas_res=st.session_state.get("ftbl_rutas_150",[])
-            if not partidos_res:
-                st.info("⬅️ Carga un bloque de partidos primero")
-            else:
-                resultados_real={}
-                st.caption("Ingresa el resultado real de cada partido:")
-                for i,p in enumerate(partidos_res):
-                    col_pr,col_rr=st.columns([3,1])
-                    with col_pr: st.write(f"**{p.get('local','')}** vs **{p.get('visitante','')}**")
-                    with col_rr:
-                        res=st.selectbox("",["—","1","X","2"],key=f"res_{i}")
-                        resultados_real[p.get("local","")]=res
-
-                if st.button("📊 Calcular accuracy",type="primary",use_container_width=True):
-                    if all(v!="—" for v in resultados_real.values()):
-                        # Accuracy por estrategia
-                        est_acc={}
-                        for r in rutas_res:
-                            est=r["estrategia"]
-                            if est not in est_acc: est_acc[est]={"ok":0,"total":0}
-                            for pk in r["picks"]:
-                                real=resultados_real.get(pk["local"],"—")
-                                if real!="—":
-                                    est_acc[est]["total"]+=1
-                                    if pk["pred"]==real: est_acc[est]["ok"]+=1
-                        st.markdown("#### 📊 Accuracy por estrategia")
-                        for est,d in sorted(est_acc.items(),key=lambda x:-x[1].get("ok",0)/max(x[1].get("total",1),1)):
-                            if d["total"]>0:
-                                pct=d["ok"]/d["total"]*100
-                                bar="🟢" if pct>=60 else "🟡" if pct>=40 else "🔴"
-                                st.progress(pct/100,text=f"{bar} {est}: {pct:.1f}% ({d['ok']}/{d['total']})")
-                        # Guardar en Supabase
-                        supa("futbol_resultados","POST",{
-                            "bloque_id":st.session_state.get("ftbl_bloque_id",""),
-                            "resultados":resultados_real,"accuracy_por_estrategia":est_acc,
-                            "creado_por":u["id"]
-                        })
-                        st.success("✅ Resultados registrados")
+                    st.markdown("### 🎯 Síntesis del Consejo IA")
+                    sint_ok=sint_fut.get("ok") if isinstance(sint_fut,dict) else False
+                    if sint_ok:
+                        st.markdown(sint_fut.get("respuesta",""))
                     else:
-                        st.warning("⚠️ Ingresa el resultado de todos los partidos")
-
-        # ────────────────────────────────────────────────────────────────
-        # TAB 4 — BIBLIOTECA
-        # ────────────────────────────────────────────────────────────────
-        with tab_f4:
-            st.markdown("### 📚 Historial de análisis")
-            q_bib=st.text_input("🔍 Filtrar","",key="ftbl_bib_q")
-            bib=supa("ftbl_biblioteca",filtro="?order=creado_en.desc") or []
-            if q_bib:
-                bib=[b for b in bib if q_bib.lower() in str(b).lower()]
-            st.caption(f"{len(bib)} análisis archivados")
-            for b in bib:
-                top_r=b.get("top_ruta",{})
-                with st.expander(f"⚽ {b.get('liga','')} — {b.get('jornada','')} | {b.get('n_partidos',0)} partidos | {b.get('creado_en','')[:10]}"):
-                    st.write(f"**Síntesis:** {b.get('sintesis','')[:300]}")
-                    if top_r:
-                        st.write(f"**Top ruta:** {top_r.get('estrategia','')} | Cuota: {top_r.get('cuota_total',0):.2f} | EV: {top_r.get('ev_total',0):.3f}")
-                    if puede_borrar(u):
-                        if st.button("🗑️",key=f"db_{b['id']}"): supa("ftbl_biblioteca","DELETE",filtro=f"?id=eq.{b['id']}"); st.rerun()
+                        st.info("Síntesis no disponible. Revisa los análisis individuales arriba.")
 
