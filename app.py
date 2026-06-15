@@ -1958,16 +1958,17 @@ elif sec=="mesa_ia" and rol=="admin":
             if bloques_ftbl:
                 st.markdown("---"); st.caption("Bloques guardados")
                 for b_ftbl in bloques_ftbl:
+                    if not isinstance(b_ftbl, dict): continue
                     cb1_f,cb2_f=st.columns([4,1])
                     with cb1_f:
-                        if st.button(f"⚽ {b_ftbl.get('liga','')} J{b_ftbl.get('jornada','')} ({b_ftbl.get('temporada','')})",key=f"bsel_{b_ftbl['id']}",use_container_width=True):
+                        if st.button(f"⚽ {b_ftbl.get('liga','')} J{b_ftbl.get('jornada','')} ({b_ftbl.get('temporada','')})",key=f"bsel_{b_ftbl.get('id','')}",use_container_width=True):
                             st.session_state["ftbl_bloque_sel"]=b_ftbl["id"]; st.rerun()
                     with cb2_f:
                         with st.popover("⋮",use_container_width=True):
-                            if st.button("🗑️ Eliminar",key=f"bdel_{b_ftbl['id']}",use_container_width=True):
-                                supa("futbol_rutas","DELETE",filtro=f"?bloque_id=eq.{b_ftbl['id']}")
-                                supa("futbol_partidos","DELETE",filtro=f"?bloque_id=eq.{b_ftbl['id']}")
-                                supa("futbol_bloques","DELETE",filtro=f"?id=eq.{b_ftbl['id']}"); st.rerun()
+                            if st.button("🗑️ Eliminar",key=f"bdel_{b_ftbl.get('id','')}",use_container_width=True):
+                                supa("futbol_rutas","DELETE",filtro=f"?bloque_id=eq.{b_ftbl.get('id','')}")
+                                supa("futbol_partidos","DELETE",filtro=f"?bloque_id=eq.{b_ftbl.get('id','')}")
+                                supa("futbol_bloques","DELETE",filtro=f"?id=eq.{b_ftbl.get('id','')}"); st.rerun()
         with tab_r:
             bid_r_f=st.session_state.get("ftbl_bloque_sel")
             if not bid_r_f: st.info("👈 Primero carga o selecciona un bloque.")
