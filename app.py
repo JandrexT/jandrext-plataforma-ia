@@ -165,53 +165,63 @@ Tel: 317 391 0621 | proyectos@jandrext.com | Bogotá, Colombia
 Comportamiento: empático, profesional, práctico. Normas colombianas cuando aplique."""
 
 # ── IAs ───────────────────────────────────────────────────────────────────────
-def gemini_fn(p, modelo="gemini-2.0-flash", sistema=None):
-    """Gemini para Mesa General — x-goog-api-key en headers + generationConfig."""
-    try:
-        t=time.time()
-        api_key=get_secret("GOOGLE_API_KEY")
-        if not api_key: return {"ia":"Gemini","icono":"🔴","respuesta":"Sin API key","tiempo":0,"ok":False}
-        GEMINI_URL=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent"
-        headers={"Content-Type":"application/json","x-goog-api-key":api_key}
-        sys_ctx=sistema if sistema else CONTEXTO
-        payload={
-            "contents":[{"parts":[{"text":sys_ctx+"\n\nConsulta: "+p}]}],
-            "generationConfig":{"temperature":0.7,"maxOutputTokens":1500}
-        }
-        r=req.post(GEMINI_URL,headers=headers,json=payload,timeout=30)
-        if r.status_code==200:
-            txt=r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-            return {"ia":"Gemini","icono":"🔵","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":True}
-        return {"ia":"Gemini","icono":"🔴","respuesta":f"HTTP {r.status_code} | {r.text[:200]}","tiempo":0,"ok":False}
-    except Exception as e: return {"ia":"Gemini","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
+# FIX 1 — Fallback de modelos Gemini (2.0 y 1.5 discontinuados jun/2026)
+GEMINI_MODELS=["gemini-2.5-flash-lite","gemini-2.5-flash","gemini-2.5-flash-preview-05-20"]
+
+def _gemini_call(prompt_txt, temperatura=0.7, max_tokens=1500, sistema=None):
+    """Helper interno: intenta modelos Gemini en orden, retorna (texto, modelo) o (None, error_str)."""
+    api_key=get_secret("GOOGLE_API_KEY")
+    if not api_key: return None,"GOOGLE_API_KEY no configurada"
+    headers={"Content-Type":"application/json","x-goog-api-key":api_key}
+    errores=[]
+    txt_prompt=((sistema or CONTEXTO)+"\n\nConsulta: "+prompt_txt) if sistema is not None else prompt_txt
+    for modelo in GEMINI_MODELS:
+        url=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent"
+        payload={"contents":[{"parts":[{"text":txt_prompt}]}],
+                 "generationConfig":{"temperature":temperatura,"maxOutputTokens":max_tokens}}
+        try:
+            r=req.post(url,headers=headers,json=payload,timeout=30)
+            if r.status_code==200:
+                return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip(), modelo
+            errores.append(f"{modelo}: HTTP {r.status_code}")
+        except Exception as e:
+            errores.append(f"{modelo}: {type(e).__name__}: {str(e)[:60]}")
+    return None," | ".join(errores)
+
+def gemini_fn(p, modelo=None, sistema=None):
+    """Gemini para Mesa General — con fallback automático de modelos."""
+    t=time.time()
+    txt,mod=_gemini_call(p,temperatura=0.7,max_tokens=1500,sistema=(sistema or CONTEXTO))
+    if txt: return {"ia":"Gemini","icono":"🔵","respuesta":txt,"modelo":mod,"tiempo":round(time.time()-t,2),"ok":True}
+    return {"ia":"Gemini","icono":"🔴","respuesta":f"Gemini no disponible: {mod}","modelo":"none","tiempo":round(time.time()-t,2),"ok":False}
 
 def gemini_mesa_fn(prompt_texto, temperatura=0.0, max_tokens=4000):
-    """Gemini REST nativo puro — sin CONTEXTO JandrexT. Retorna solo el texto.
-    Usado para parser de partidos y análisis deportivo sin contaminación corporativa."""
-    import json as _json
-    api_key=get_secret("GOOGLE_API_KEY")
-    if not api_key: return f"Error: GOOGLE_API_KEY no encontrada en Streamlit Secrets."
-    GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-    headers={"Content-Type":"application/json","x-goog-api-key":api_key}
-    payload={
-        "contents":[{"parts":[{"text":prompt_texto}]}],
-        "generationConfig":{"temperature":temperatura,"maxOutputTokens":max_tokens}
-    }
-    try:
-        r=req.post(GEMINI_URL,headers=headers,json=payload,timeout=30)
-        if r.status_code==200:
-            return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        return f"Error Gemini API (Status {r.status_code}): {r.text[:200]}"
-    except Exception as e: return f"Error crítico Gemini: {type(e).__name__}: {str(e)[:200]}"
+    """Gemini REST nativo puro — sin CONTEXTO JandrexT. Retorna solo texto con fallback."""
+    txt,mod=_gemini_call(prompt_texto,temperatura=temperatura,max_tokens=max_tokens,sistema="")
+    if txt: return txt
+    return f"Error Gemini: {mod}"
 
 def gemini_deporte_fn(p):
-    """Gemini para análisis deportivo — sin CONTEXTO corporativo, retorna dict estándar."""
-    try:
-        t=time.time()
-        txt=gemini_mesa_fn(p,temperatura=0.7,max_tokens=1500)
-        ok=not txt.startswith("Error")
-        return {"ia":"Gemini","icono":"🔵","respuesta":txt,"tiempo":round(time.time()-t,2),"ok":ok}
-    except Exception as e: return {"ia":"Gemini","icono":"🔴","respuesta":str(e),"tiempo":0,"ok":False}
+    """Gemini para análisis deportivo — sin CONTEXTO corporativo, fallback automático."""
+    api_key=get_secret("GOOGLE_API_KEY")
+    if not api_key:
+        return {"ia":"Gemini","icono":"🔵","respuesta":"GOOGLE_API_KEY no configurada","tiempo":0,"ok":False}
+    headers={"Content-Type":"application/json","x-goog-api-key":api_key}
+    errores=[]
+    for modelo in GEMINI_MODELS:
+        url=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent"
+        payload={"contents":[{"parts":[{"text":p}]}],
+                 "generationConfig":{"temperature":0.0,"maxOutputTokens":4000}}
+        try:
+            t=time.time()
+            r=req.post(url,headers=headers,json=payload,timeout=30)
+            if r.status_code==200:
+                txt=r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                return {"ia":"Gemini","icono":"🔵","respuesta":txt,"modelo":modelo,"tiempo":round(time.time()-t,2),"ok":True}
+            errores.append(f"{modelo}: HTTP {r.status_code}")
+        except Exception as e:
+            errores.append(f"{modelo}: {type(e).__name__}: {str(e)[:80]}")
+    return {"ia":"Gemini","icono":"🔴","respuesta":"Gemini no disponible. Intentos: "+" | ".join(errores),"modelo":"none","tiempo":0,"ok":False}
 
 def groq_fn(p):
     try:
@@ -288,30 +298,18 @@ def juez_fn(pregunta, respuestas):
     try:
         api_key = get_secret("GOOGLE_API_KEY")
         if api_key:
-            GEMINI_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-            headers_j={"Content-Type":"application/json","x-goog-api-key":api_key}
-            payload={"contents":[{"parts":[{"text":prompt_juez}]}],
-                     "generationConfig":{"temperature":0.3,"maxOutputTokens":1500}}
-            r=req.post(GEMINI_URL,headers=headers_j,json=payload,timeout=30)
-            if r.status_code==200:
-                return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+            _txt,_mod=_gemini_call(prompt_juez,temperatura=0.3,max_tokens=1500,sistema="")
+            if _txt: return _txt
     except: pass
     try:
         return groq_simple(prompt_juez)
     except: pass
     return max(ok_resps, key=lambda x: len(x["respuesta"]))["respuesta"]
 
-def ia_generar(prompt, modelo="gemini-2.0-flash"):
+def ia_generar(prompt, modelo=None):
     try:
-        api_key=get_secret("GOOGLE_API_KEY")
-        if not api_key: return groq_simple(prompt)
-        GEMINI_URL=f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent"
-        headers_g={"Content-Type":"application/json","x-goog-api-key":api_key}
-        payload={"contents":[{"parts":[{"text":CONTEXTO+"\n\n"+prompt}]}],
-                 "generationConfig":{"temperature":0.7,"maxOutputTokens":1500}}
-        r=req.post(GEMINI_URL,headers=headers_g,json=payload,timeout=30)
-        if r.status_code==200:
-            return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        txt,_=_gemini_call(prompt,temperatura=0.7,max_tokens=1500,sistema=CONTEXTO)
+        if txt: return txt
         return groq_simple(prompt)
     except Exception as e: return groq_simple(prompt)
 
@@ -335,10 +333,14 @@ Si no encuentras un dato, deja el campo vacío. NIT sin puntos ni guiones."""
             mime = "application/pdf" if tipo=="pdf" else "image/jpeg"
             payload = {"contents":[{"parts":[{"text":prompt_json},{"inline_data":{"mime_type":mime,"data":b64}}]}],
                        "generationConfig":{"temperature":0.0,"maxOutputTokens":600}}
-            GEMINI_URL_DOC="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
             headers_d={"Content-Type":"application/json","x-goog-api-key":api_key}
-            r = req.post(GEMINI_URL_DOC, headers=headers_d, json=payload, timeout=45)
-            if r.status_code == 200:
+            _doc_ok=False
+            for _m in GEMINI_MODELS:
+                _doc_url=f"https://generativelanguage.googleapis.com/v1beta/models/{_m}:generateContent"
+                r=req.post(_doc_url,headers=headers_d,json=payload,timeout=45)
+                if r.status_code==200: _doc_ok=True; break
+            if not _doc_ok: raise Exception(f"Todos los modelos fallaron")
+            if _doc_ok:
                 txt = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
                 res = parsear_json(txt)
                 if res.get("nit") or res.get("razon_social"): return res
@@ -2354,19 +2356,23 @@ Empate 4.00
                                 txt=resp_futbol[ia].get("respuesta","").lower()
                                 if local.lower()[:5] in txt or visitante.lower()[:5] in txt:
                                     n_ias_favor+=1
-                            # Confianza (EV negativo NUNCA es Alta)
-                            if ev_partido<0:
-                                conf="🔴 Bajo valor"
-                                apta_para="No recomendada"
-                            elif n_ias_favor>=4 and ev_partido>=0.10:
-                                conf="🟢 Alta confianza"
-                                apta_para="Ticket Premium / Conservador"
-                            elif n_ias_favor>=3 and ev_partido>=0.0:
-                                conf="🟡 Media confianza"
-                                apta_para="Ticket Balanceado"
+                            # FIX 3 — Confianza por consenso (independiente del EV)
+                            if n_ias_favor>=4: conf="🟢 Alta confianza"
+                            elif n_ias_favor>=3: conf="🟡 Media confianza"
+                            elif n_ias_favor>=2: conf="🟡 Confianza media"
+                            else: conf="🔴 Baja confianza"
+                            # apta_para: por consenso y cuota — NUNCA "No recomendada" para consenso>=3
+                            _cons_ratio=n_ias_favor/max(n_ias_ok,1)
+                            if _cons_ratio>=0.75 and best_cuota<=2.00:
+                                apta_para="Ticket conservador corto"
+                            elif _cons_ratio>=0.60 and best_cuota<=2.50:
+                                apta_para="Ticket balanceado"
+                            elif _cons_ratio>=0.50 and best_cuota>2.50:
+                                apta_para="Ticket de valor"
+                            elif _cons_ratio<0.50 or (ev_partido<-0.05 and _cons_ratio<0.60):
+                                apta_para="Evitar"
                             else:
-                                conf="🔴 Baja confianza"
-                                apta_para="Evitar o Ticket Especiales"
+                                apta_para="Ticket balanceado"
                             # Riesgo por cuota
                             if best_cuota<1.5: riesgo="Bajo"
                             elif best_cuota<2.5: riesgo="Medio"
@@ -2538,7 +2544,7 @@ Empate 4.00
                     _sec_lot=[r for r in top_show if r.get("cuota_total",0)>100000]
 
                     if rutas_ocultas:
-                        if st.button("👁️ Mostrar rutas ocultas",key="mostrar_ocultas"):
+                        if st.button("👁️ Mostrar rutas ocultas",key="mostrar_ocultas_top"):
                             st.session_state["rutas_ocultas"]=[]
                             st.rerun()
                         st.caption(f"{len(rutas_ocultas)} ruta(s) oculta(s) | disponibles en Biblioteca")
@@ -2566,7 +2572,8 @@ Empate 4.00
                                 # FIX 6: Botón ✕ eliminar ruta
                                 col_tbl,col_del=st.columns([10,1])
                                 with col_del:
-                                    if st.button("✕",key=f"del_ruta_{r_id}",help="Ocultar esta ruta"):
+                                    _key_del=f"del_ruta_{sec_label}_{idx_s}_{r_id}"
+                                    if st.button("✕",key=_key_del,help="Ocultar esta ruta"):
                                         st.session_state.setdefault("rutas_ocultas",[])
                                         if r_id not in st.session_state["rutas_ocultas"]:
                                             st.session_state["rutas_ocultas"].append(r_id)
