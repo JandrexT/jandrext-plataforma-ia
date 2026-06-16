@@ -2281,13 +2281,12 @@ Empate 4.00
                             "No menciones contextos empresariales ni temas ajenos al deporte.\n"
                         )
                         roles_futbol={
-                            "ChatGPT":(BASE_DEPORTE+"ROL: Generador de predicciones.\nPropón predicción 1/X/2 por partido con justificación breve. Identifica las 3 mejores combinaciones para parlay. Di 1, X o 2 por cada partido."),
-                            "Claude":(BASE_DEPORTE+"ROL: Auditor de riesgos.\nDetecta partidos trampa y riesgos ocultos. Indica riesgo bajo/medio/alto por partido. ¿Cuáles evitarías en un parlay?"),
-                            "Gemini":(BASE_DEPORTE+f"ROL: Contextualizador {torneo_act}.\nAporta contexto: H2H reciente, fase del torneo, motivación, jugadores clave, factores externos. Si no tienes datos: indica [SIN DATOS]."),
-                            "Groq":(BASE_DEPORTE+"ROL: Análisis rápido.\nLos 5 partidos más predecibles. Una línea: equipo + 1/X/2 + razón. Sé muy conciso."),
-                            "Mistral":(BASE_DEPORTE+"ROL: Perspectiva alternativa.\n¿Cuotas subvaloradas? ¿Empates estructurales? ¿Visitante con valor real? ¿Dónde se equivoca el mercado?")
+                            "ChatGPT":(BASE_DEPORTE+"ROL: Prediccion base.\nPara cada partido predice 1/X/2 basandote en: fuerza estructural, forma reciente, calidad de plantilla, necesidad de puntos, jugadores disponibles y contexto del torneo. No uses las cuotas para decidir el pick. No puedes omitir ningun partido. Di 1, X o 2 por cada uno."),
+                            "Claude":(BASE_DEPORTE+"ROL: Auditor de riesgos.\nDetecta favoritos peligrosos, empates estructurales, rotaciones, partidos trampa y riesgos ocultos. No uses cuotas como criterio. Usa analisis deportivo puro. Indica riesgo bajo/medio/alto por partido."),
+                            "Gemini":(BASE_DEPORTE+f"ROL: Contextualizador {torneo_act}.\nAporta: forma reciente, H2H conocido, jugadores clave, bajas, sanciones, motivacion, fase del torneo, noticias relevantes. Si no tienes datos verificables: [SIN DATOS]. Analiza el deporte primero, la cuota solo como referencia al final."),
+                            "Groq":(BASE_DEPORTE+"ROL: Ranking rapido.\nOrdena los partidos por claridad deportiva. Top picks simples y riesgos principales. Sin cuotas. Una linea por partido: equipo + 1/X/2 + razon deportiva breve."),
+                            "Mistral":(BASE_DEPORTE+"ROL: Perspectiva contraria.\nBusca empates estructurales y sorpresas viables. No inventes. No uses cuota para decidir.\nSENALES DE EMPATE: fuerzas similares, bajo volumen ofensivo esperado, empate beneficia a ambos, estilos conservadores, H2H reciente cerrado, ausencia de goleadores, fase donde no perder es suficiente.\nSENALES DE SORPRESA: favorito con bajas criticas, favorito ya clasificado puede rotar, favorito sufre contra bloque bajo, rival con transicion rapida o balon parado, rival necesita ganar si o si.")
                         }
-
                         def _run_ia_futbol(ia_nombre):
                             rol_ia=roles_futbol.get(ia_nombre,"")
                             prompt_ia=(
@@ -2482,27 +2481,41 @@ Empate 4.00
 
                     st.markdown("---")
 
-                    # ── VEREDICTO POR PARTIDO (CAMBIO 1: formato deportivo, cuota al final)
+                    # ── VEREDICTO POR PARTIDO (FASE 1.3: formato completo deportivo)
                     st.markdown(f"### 🎯 Veredicto por partido ({len(veredicto_partidos)} partidos)")
+                    _conf_clean=lambda c: c.replace("🟢 ","").replace("🟡 ","").replace("🔴 ","").replace(" confianza","").replace("Confianza ","")
+                    _motivo_v={
+                        "Ticket conservador corto":"superioridad deportiva clara, alto consenso entre IAs",
+                        "Ticket balanceado":"ventaja táctica moderada, respaldo de la mayoría de IAs",
+                        "Ticket de valor":"potencial deportivo identificado por las IAs",
+                        "Evitar":"partido equilibrado o con alta incertidumbre deportiva"
+                    }
+                    _rc_map={
+                        ("1","Bajo"):"sorpresa del visitante si hay rotaciones o baja clave del favorito",
+                        ("1","Medio"):"visitante puede robar puntos con contragolpe o balón parado",
+                        ("1","Alto"):"alta posibilidad de empate o sorpresa del visitante",
+                        ("X","Bajo"):"un gol temprano puede romper el equilibrio del partido",
+                        ("X","Medio"):"ambos pueden necesitar los 3 puntos, lo que abre el juego",
+                        ("X","Alto"):"partido muy abierto, el empate es uno de varios escenarios",
+                        ("2","Bajo"):"local con ventaja de campo y presión de afición puede reaccionar",
+                        ("2","Medio"):"local bajo presión busca remontada con apoyo de su público",
+                        ("2","Alto"):"local desesperado atacará con todo, puede surgir el gol",
+                    }
                     for k,v in veredicto_partidos.items():
                         local,visitante=k.split("|")
-                        _conf_txt=v["conf"].replace("🟢 ","").replace("🟡 ","").replace("🔴 ","")
-                        _motivo_map={
-                            "Ticket conservador corto":"superioridad deportiva clara, alto consenso entre IAs",
-                            "Ticket balanceado":"ventaja táctica moderada, respaldo de la mayoría de IAs",
-                            "Ticket de valor":"potencial deportivo identificado por las IAs",
-                            "Evitar":"partido equilibrado o con alta incertidumbre deportiva"
-                        }
-                        _motivo=_motivo_map.get(v["apta_para"],"análisis basado en forma y contexto del torneo")
+                        _ct=_conf_clean(v["conf"])
+                        _mot=_motivo_v.get(v["apta_para"],"análisis basado en forma y contexto del torneo")
+                        _rc=_rc_map.get((v["pred"],v["riesgo"]),"factor de incertidumbre siempre presente en el fútbol")
                         with st.container():
                             st.markdown(
                                 f"**{local} vs {visitante}**\n\n"
                                 f"→ **Predicción deportiva:** {v['pred_txt']}\n\n"
-                                f"→ **Confianza deportiva:** {_conf_txt}\n\n"
-                                f"→ **Riesgo:** {v['riesgo']}\n\n"
-                                f"→ **Consenso:** {v['n_ias']}/{n_ias_ok} IAs\n\n"
-                                f"→ **Motivo:** {_motivo}\n\n"
-                                f"→ **Apta para:** {v['apta_para']}\n\n"
+                                f"→ **Confianza deportiva:** {_ct}\n\n"
+                                f"→ **Riesgo deportivo:** {v['riesgo']}\n\n"
+                                f"→ **Consenso IAs:** {v['n_ias']}/{n_ias_ok}\n\n"
+                                f"→ **Motivo deportivo:** {_mot}\n\n"
+                                f"→ **Riesgo contrario:** {_rc}\n\n"
+                                f"→ **Uso recomendado:** {v['apta_para']}\n\n"
                                 f"→ *Cuota referencia: {v['cuota']:.2f}*"
                             )
                             st.markdown("---")
@@ -2510,25 +2523,18 @@ Empate 4.00
                     _n_partidos_total=len(veredicto_partidos)
                     if _n_partidos_total>0:
                         st.markdown("### 🎯 Selector de oportunidades")
-                        _opciones_n=[3,4,5,6,7,8,10,"Personalizado"]
+                        _opciones_n=[i for i in [3,4,5,6,7,8,10] if i<=_n_partidos_total]
+                        if not _opciones_n: _opciones_n=[_n_partidos_total]
+                        _def_idx=min(2,len(_opciones_n)-1)
                         _n_sel=st.selectbox(
                             "¿Cuántas mejores oportunidades deseas sintetizar?",
                             options=_opciones_n,
-                            index=2,
+                            index=_def_idx,
                             key="ftbl_n_picks_sel"
                         )
-                        if _n_sel=="Personalizado":
-                            _n_sel=st.number_input(
-                                "Ingresa la cantidad",
-                                min_value=2,
-                                max_value=_n_partidos_total,
-                                value=min(5,_n_partidos_total),
-                                step=1,
-                                key="ftbl_n_picks_custom"
-                            )
                         _n_picks_final=min(int(_n_sel),_n_partidos_total)
                         if int(_n_sel)>_n_partidos_total:
-                            st.warning(f"Solo hay {_n_partidos_total} partidos analizados. Se usarán todos.")
+                            st.warning(f"Solo hay {_n_partidos_total} partidos. Se usarán todos.")
                         # ── CAMBIO 3: TICKET SINTETIZADO con N mejores (orden deportivo)
                         _riesgo_num={"Bajo":2,"Medio":1,"Alto":0}
                         _conf_num={"🟢 Alta confianza":2,"🟡 Media confianza":1,"🟡 Confianza media":1,"🔴 Baja confianza":0}
@@ -2547,13 +2553,20 @@ Empate 4.00
                             "Modo: Deportivo primero / cuotas solo referencia",
                             "━"*24,""
                         ]
-                        for _pk,_pv in _mejores_n:
+                        _mot_t_map={
+                            "Ticket conservador corto":"superioridad deportiva, alto consenso IAs",
+                            "Ticket balanceado":"ventaja táctica moderada, respaldo mayoría IAs",
+                            "Ticket de valor":"potencial deportivo identificado",
+                            "Evitar":"alta incertidumbre deportiva"
+                        }
+                        for _idx_t,(_pk,_pv) in enumerate(_mejores_n,1):
                             _pl,_pv2=_pk.split("|")
-                            _conf_t=_pv["conf"].replace("🟢 ","").replace("🟡 ","").replace("🔴 ","")
-                            _ticket_lines.append(f"⚽ {_pl} vs {_pv2}")
-                            _ticket_lines.append(f"→ {_pv['pred_txt']}")
-                            _ticket_lines.append(f"   Confianza: {_conf_t} | Consenso: {_pv['n_ias']}/{n_ias_ok} IAs | Riesgo: {_pv['riesgo']}")
-                            _ticket_lines.append(f"   Apta para: {_pv['apta_para']}")
+                            _ct2=_pv["conf"].replace("🟢 ","").replace("🟡 ","").replace("🔴 ","").replace(" confianza","").replace("Confianza ","")
+                            _mot_t=_mot_t_map.get(_pv["apta_para"],"análisis deportivo")
+                            _ticket_lines.append(f"{_idx_t}. {_pv['pred_txt']}")
+                            _ticket_lines.append(f"   Partido: {_pl} vs {_pv2}")
+                            _ticket_lines.append(f"   Confianza: {_ct2} | Consenso: {_pv['n_ias']}/{n_ias_ok} IAs | Riesgo: {_pv['riesgo']}")
+                            _ticket_lines.append(f"   Motivo: {_mot_t}")
                             _ticket_lines.append("")
                             _cuota_acum*=_pv["cuota"]
                         _ticket_lines+=[
