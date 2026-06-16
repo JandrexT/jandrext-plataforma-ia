@@ -2614,8 +2614,21 @@ Empate 4.00
         # ────────────────────────────────────────────────────────────────
         with tab_f3:
             st.markdown("### 📒 Registro de Apuesta / Voucher")
-            modo_sim_val=st.session_state.get("ftbl_modo_sim",True)
-            st.info(f"Modo actual: {'🔬 Simulado' if modo_sim_val else '💰 Real'}")
+
+            # ── Toggle Real/Simulado PROMINENTE
+            _modo_opciones={"💰 Apuesta REAL (afecta bankroll)":False,"🔬 Simulado (práctica, no afecta)":True}
+            _modo_actual=st.session_state.get("ftbl_modo_sim",True)
+            _modo_sel=st.radio(
+                "**¿Qué tipo de apuesta vas a registrar?**",
+                list(_modo_opciones.keys()),
+                index=1 if _modo_actual else 0,
+                horizontal=True,
+                key="ftbl_modo_radio_reg"
+            )
+            modo_sim_val=_modo_opciones[_modo_sel]
+            st.session_state["ftbl_modo_sim"]=modo_sim_val
+            if not modo_sim_val:
+                st.warning("⚠️ **Modo REAL activado.** Esta apuesta se registrará como real y afectará tu bankroll.")
 
             tickets_data_r=st.session_state.get("ftbl_tickets",{})
             liga_r=st.session_state.get("ftbl_liga_activa","")
@@ -2629,13 +2642,13 @@ Empate 4.00
                     ["Conservador","Balanceado","Premium","Personalizado"])
                 casa_apuestas=st.selectbox("Casa de apuestas",["Wplay","Codere","Betplay","Otra"])
                 stake=st.number_input("Monto apostado ($)",min_value=0,value=1000,step=500)
-                voucher_txt=st.text_area("📋 Pega aquí el comprobante (opcional)",height=120,
-                    placeholder="Copia el número de ticket o código de confirmación de la casa de apuestas...")
+                voucher_txt=st.text_area("📋 Código / comprobante de la apuesta (opcional)",height=100,
+                    placeholder="Pega el número de ticket o código de confirmación de Wplay/Codere...")
 
                 if st.button("💾 Registrar apuesta",type="primary",use_container_width=True):
                     ticket_id=str(uuid.uuid4())[:8].upper()
                     n_ias_r=len(st.session_state.get("ftbl_ias_ok",[]))
-                    supa("football_bets","POST",{
+                    _res_post=supa("football_bets","POST",{
                         "user_id":u["id"],
                         "ticket_id":ticket_id,
                         "casa_apuestas":casa_apuestas,
@@ -2648,23 +2661,75 @@ Empate 4.00
                         "simulado":modo_sim_val,
                         "ai_ticket_json":json.dumps(tickets_data_r.get(tipo_ticket.lower(),{}),ensure_ascii=False)[:2000]
                     })
-                    if modo_sim_val:
-                        st.success(f"✅ Ticket #{ticket_id} registrado en modo SIMULADO. No afecta bankroll.")
+                    if _res_post is not None and not (isinstance(_res_post,dict) and _res_post.get("error")):
+                        if modo_sim_val:
+                            st.success(f"✅ Ticket #{ticket_id} guardado en modo SIMULADO.")
+                        else:
+                            st.success(f"✅ Ticket #{ticket_id} guardado como apuesta REAL. Revisa tu saldo.")
+                        st.rerun()
                     else:
-                        st.success(f"✅ Ticket #{ticket_id} registrado en modo REAL. Revisa tu saldo.")
+                        st.error(f"❌ Error al guardar en Supabase: {_res_post}. Verifica que la tabla football_bets existe.")
 
-                # Apuestas registradas
-                st.markdown("---")
-                st.markdown("### 📋 Apuestas registradas")
-                bets=supa("football_bets",filtro=f"?user_id=eq.{u['id']}&order=created_at.desc&limit=10") or []
-                if not isinstance(bets,list): bets=[]
-                for bet in [x for x in bets if isinstance(x,dict)]:
-                    modo_b="🔬" if bet.get("simulado") else "💰"
-                    st.markdown(
-                        f"{modo_b} **#{bet.get('ticket_id','')}** | {bet.get('tipo_ticket','')} | "
-                        f"{bet.get('casa_apuestas','')} | ${bet.get('stake',0):,.0f} | "
-                        f"Estado: `{bet.get('status','')}`"
-                    )
+            # ── Lista de apuestas registradas
+            st.markdown("---")
+            st.markdown("### 📋 Historial de apuestas")
+            _raw_bets=supa("football_bets",filtro=f"?user_id=eq.{u['id']}&order=created_at.desc&limit=20")
+            if _raw_bets is None:
+                st.error("❌ No se pudo conectar a Supabase. Verifica la tabla `football_bets`.")
+                with st.expander("📋 SQL para crear la tabla en Supabase"):
+                    st.code("""CREATE TABLE IF NOT EXISTS football_bets (
+  id           UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id      UUID REFERENCES auth.users(id),
+  ticket_id    TEXT,
+  casa_apuestas TEXT,
+  torneo       TEXT,
+  tipo_ticket  TEXT,
+  stake        NUMERIC DEFAULT 0,
+  status       TEXT DEFAULT 'placed',
+  voucher_text TEXT,
+  consenso_ias INTEGER DEFAULT 0,
+  simulado     BOOLEAN DEFAULT false,
+  ai_ticket_json TEXT,
+  created_at   TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE football_bets ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "own_bets_select" ON football_bets FOR SELECT USING (auth.uid()=user_id);
+CREATE POLICY "own_bets_insert" ON football_bets FOR INSERT WITH CHECK (auth.uid()=user_id);
+CREATE POLICY "own_bets_update" ON football_bets FOR UPDATE USING (auth.uid()=user_id);""", language="sql")
+            else:
+                bets=_raw_bets if isinstance(_raw_bets,list) else []
+                bets=[x for x in bets if isinstance(x,dict)]
+                if not bets:
+                    st.info("Sin apuestas registradas aún. Registra tu primera apuesta arriba.")
+                else:
+                    st.caption(f"{len(bets)} apuesta(s) registrada(s)")
+                    for bet in bets:
+                        modo_b="🔬 SIM" if bet.get("simulado") else "💰 REAL"
+                        _estado=bet.get("status","pending")
+                        _icon={"placed":"⏳","won":"✅","lost":"❌","simulated":"🔬"}.get(_estado,"⏳")
+                        with st.expander(
+                            f"{_icon} #{bet.get('ticket_id','')} | {modo_b} | "
+                            f"{bet.get('tipo_ticket','').title()} | "
+                            f"${bet.get('stake',0):,.0f} | {bet.get('casa_apuestas','')}",
+                            expanded=False
+                        ):
+                            c1,c2,c3=st.columns(3)
+                            c1.metric("Tipo",bet.get("tipo_ticket","").title())
+                            c2.metric("Monto",f"${bet.get('stake',0):,.0f}")
+                            c3.metric("Estado",_estado)
+                            if bet.get("torneo"): st.caption(f"🏆 {bet.get('torneo','')} | {bet.get('casa_apuestas','')}")
+                            if bet.get("voucher_text"): st.text(f"Comprobante: {bet.get('voucher_text','')[:200]}")
+                            # Cambiar estado (ganada/perdida)
+                            _nuevo_estado=st.selectbox(
+                                "Actualizar resultado",
+                                ["placed","simulated","won","lost"],
+                                index=["placed","simulated","won","lost"].index(_estado) if _estado in ["placed","simulated","won","lost"] else 0,
+                                key=f"estado_bet_{bet.get('id','')}"
+                            )
+                            if st.button("💾 Guardar resultado",key=f"save_bet_{bet.get('id','')}"):
+                                supa("football_bets","PATCH",{"status":_nuevo_estado},filtro=f"?id=eq.{bet.get('id','')}")
+                                st.success("✅ Estado actualizado")
+                                st.rerun()
 
         # ────────────────────────────────────────────────────────────────
         # TAB 4 — RESULTADOS
