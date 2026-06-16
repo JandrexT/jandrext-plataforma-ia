@@ -2155,6 +2155,22 @@ Empate 4.00
 
                 n_rutas=st.slider("🎯 Mostrar N mejores rutas",min_value=5,max_value=20,value=10,step=1)
 
+                # Helper definido en scope externo para que el display lo acceda en cada rerender
+                def _ticket_txt(nombre,picks_sel,monto,ligat,jorl,nota=""):
+                    n_ias_ok=len(st.session_state.get("ftbl_ias_ok",[]))
+                    lines=[f"🎟️ {nombre} — {ligat}",f"📅 {jorl}","━"*24]
+                    cuota_t=1.0
+                    for k,v in picks_sel:
+                        local,visitante=k.split("|")
+                        lines.append(f"⚽ {local} vs {visitante}")
+                        lines.append(f"   → {v['pred_txt']} ({v['pred']}) @ {v['cuota']:.2f}")
+                        lines.append(f"   IAs: {v['n_ias']}/5 | {v['conf']} | Riesgo: {v['riesgo']}")
+                        cuota_t*=v["cuota"]
+                    lines+=["━"*24,f"💰 Apuesta ${monto:,.0f} → Retorno: ${monto*cuota_t:,.0f}",
+                            f"📊 Cuota total: {cuota_t:.2f}x",f"📱 jandrext-ia.streamlit.app | {n_ias_ok}/5 IAs"]
+                    if nota: lines.append(f"📌 {nota}")
+                    return "\n".join(lines)
+
                 if st.button("🚀 Analizar con 5 IAs y generar tickets",type="primary",use_container_width=True):
                     with st.spinner("🧠 5 IAs analizando (15-30s)..."):
                         import random, math
@@ -2368,20 +2384,6 @@ Empate 4.00
                         todos_picks.sort(key=lambda x:-x[1]["n_ias"])
                         picks_ev_pos=[(k,v) for k,v in todos_picks if v["ev"]>=0]
                         picks_ordenados=picks_ev_pos  # para rutas y referencias
-
-                        def _ticket_txt(nombre,picks_sel,monto,ligat,jorl,nota=""):
-                            lines=[f"🎟️ {nombre} — {ligat}",f"📅 {jorl}","━"*24]
-                            cuota_t=1.0
-                            for k,v in picks_sel:
-                                local,visitante=k.split("|")
-                                lines.append(f"⚽ {local} vs {visitante}")
-                                lines.append(f"   → {v['pred_txt']} ({v['pred']}) @ {v['cuota']:.2f}")
-                                lines.append(f"   IAs: {v['n_ias']}/5 | {v['conf']} | Riesgo: {v['riesgo']}")
-                                cuota_t*=v["cuota"]
-                            lines+=["━"*24,f"💰 Apuesta ${monto:,.0f} → Retorno: ${monto*cuota_t:,.0f}",
-                                    f"📊 Cuota total: {cuota_t:.2f}x",f"📱 jandrext-ia.streamlit.app | {n_ias_ok}/5 IAs"]
-                            if nota: lines.append(f"📌 {nota}")
-                            return "\n".join(lines)
 
                         # FIX 3: Ticket Conservador SIEMPRE generado
                         # Primero intentar picks con EV>=0 y cuota<=2.50
@@ -2674,4 +2676,4 @@ Empate 4.00
             if not bloques_bib:
                 st.info("Aún no hay bloques guardados.")
             for b in [x for x in bloques_bib[:20] if isinstance(x,dict)]:
-                st.markdown(f"⚽ **{b.get('liga','')}** — {b.get('jornada','')} | {b.get('n_partidos',0)} partidos")
+                st.markdown(f"⚽ **{b.get('liga','')} — {b.get('jornada','')} | {b.get('n_partidos',0)} partidos")
