@@ -1,5 +1,5 @@
 import streamlit as st
-import os, time, json, uuid, hashlib, base64, concurrent.futures, smtplib
+import os, time, json, uuid, hashlib, base64, concurrent.futures, smtplib, unicodedata, re
 import requests as req
 # google.generativeai reemplazado por REST directo para mayor compatibilidad
 from datetime import datetime, timedelta
@@ -928,6 +928,551 @@ def parser_regex_wplay(texto_limpio):
             "contexto_h2h":"","observacion":""
         })
     return partidos
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FOOTBALL LAB — FASE 1.4: Motor Multiverso Odds-Blind
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── BLOQUE 1: Normalización y claves
+def normalizar_para_key(s):
+    s = unicodedata.normalize("NFKD", str(s).lower().strip())
+    s = s.encode("ascii", "ignore").decode("ascii")
+    s = re.sub(r"[^a-z0-9]+", "_", s)
+    return s.strip("_")
+
+def normalizar_busqueda(s):
+    s = unicodedata.normalize("NFKD", str(s).lower().strip())
+    s = s.encode("ascii", "ignore").decode("ascii")
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return s.strip()
+
+def generar_key(local, visitante):
+    return f"{normalizar_para_key(local)}_vs_{normalizar_para_key(visitante)}"
+
+# ── BLOQUE 2: Prompt estructurado con keys explícitas
+def construir_prompt_partidos(partidos):
+    lista = [
+        {"key": p["key"], "local": p["local"], "visitante": p["visitante"]}
+        for p in partidos
+    ]
+    return (
+        "Partidos a analizar (usa exactamente estas keys):\n"
+        + json.dumps(lista, ensure_ascii=False, indent=2)
+        + '\n\nResponde UNICAMENTE en JSON valido con esta estructura:\n'
+        + '{\n  "partidos": {\n    "key_del_partido": {\n'
+        + '      "pred": "1" o "X" o "2",\n'
+        + '      "resultado": "Equipo gana" o "Empate",\n'
+        + '      "confianza": "Alta" o "Media" o "Baja",\n'
+        + '      "riesgo": "Bajo" o "Medio" o "Alto",\n'
+        + '      "motivo": "razon deportiva breve",\n'
+        + '      "riesgo_contrario": "por que podria fallar"\n'
+        + '    }\n  }\n}\n\n'
+        + "NO uses otras keys. NO texto fuera del JSON. Sin bloques markdown."
+    )
+
+# ── BLOQUE 3: Limpieza JSON y extracción estructurada
+def limpiar_json_llm(texto):
+    texto = str(texto or "").strip()
+    texto = texto.replace("```json", "").replace("```", "").strip()
+    match = re.search(r'\{\s*"partidos"\s*:\s*\{.*\}\s*\}', texto, re.DOTALL)
+    if match:
+        texto_json = match.group(0)
+    else:
+        match2 = re.search(r'\{.*\}', texto, re.DOTALL)
+        texto_json = match2.group(0) if match2 else texto
+    texto_json = re.sub(r',\s*}', '}', texto_json)
+    texto_json = re.sub(r',\s*\]', ']', texto_json)
+    return texto_json
+
+def extraer_picks_estructurados(respuesta_ia, partidos):
+    picks = {}
+    texto = respuesta_ia.get("respuesta", "")
+    try:
+        texto_limpio = limpiar_json_llm(texto)
+        data = json.loads(texto_limpio)
+    except Exception:
+        return {}
+    partidos_data_raw = data.get("partidos", {})
+    partidos_data = {str(k).strip().lower(): v for k, v in partidos_data_raw.items()}
+    for p in partidos:
+        key = p["key"]
+        item = partidos_data.get(key, {})
+        pred = str(item.get("pred", "")).strip().upper()
+        if pred in ["1", "X", "2"]:
+            picks[key] = {
+                "pred": pred,
+                "resultado": item.get("resultado", ""),
+                "confianza": item.get("confianza", "media"),
+                "riesgo": item.get("riesgo", "medio"),
+                "motivo": item.get("motivo", ""),
+                "riesgo_contrario": item.get("riesgo_contrario", "")
+            }
+    return picks
+
+# ── BLOQUE 4: Fallback por contexto específico
+_negaciones_empate = [
+    "no veo empate", "empate poco probable", "evitar empate",
+    "dificil el empate", "no hay empate", "empate improbable",
+    "riesgo de empate", "puede buscar el empate"
+]
+
+def obtener_contexto_partido(texto, local_norm, visitante_norm):
+    texto = str(texto or "")
+    texto_norm = normalizar_busqueda(texto)
+    contexto_acumulado = ""
+    for bloque in texto.split("\n\n"):
+        bloque_norm = normalizar_busqueda(bloque)
+        if local_norm in bloque_norm or visitante_norm in bloque_norm:
+            contexto_acumulado += bloque_norm + " "
+    if contexto_acumulado.strip():
+        return contexto_acumulado.strip()
+    oraciones = re.split(r'(?<=[\.\.!\?])\s+', texto)
+    for oracion in oraciones:
+        oracion_norm = normalizar_busqueda(oracion)
+        if local_norm in oracion_norm or visitante_norm in oracion_norm:
+            contexto_acumulado += oracion_norm + " "
+    if contexto_acumulado.strip():
+        return contexto_acumulado.strip()
+    for nombre in [local_norm, visitante_norm]:
+        idx = texto_norm.find(nombre)
+        if idx >= 0:
+            inicio = max(0, idx - 250)
+            fin = min(len(texto_norm), idx + 350)
+            return texto_norm[inicio:fin]
+    return ""
+
+def menciona_empate_valido(texto, local_norm, visitante_norm):
+    """Verifica si una IA menciona empate con fundamento real, filtrando negaciones."""
+    contexto = obtener_contexto_partido(texto, local_norm, visitante_norm)
+    if not contexto:
+        return False
+    contexto_norm = normalizar_busqueda(contexto)
+    if any(normalizar_busqueda(neg) in contexto_norm for neg in _negaciones_empate):
+        return False
+    patrones_x = ["empate", "pick x", "resultado x", "prediccion x", "veredicto empate"]
+    return any(pat in contexto_norm for pat in patrones_x)
+
+def extraer_picks_de_texto(texto_ia, partidos):
+    """Fallback: solo si JSON falla. Usa contexto específico, no texto global."""
+    picks = {}
+    for p in partidos:
+        local_norm = normalizar_busqueda(p["local"])
+        visitante_norm = normalizar_busqueda(p["visitante"])
+        key = p["key"]
+        pred = None
+        contexto = obtener_contexto_partido(texto_ia, local_norm, visitante_norm)
+        if not contexto:
+            picks[key] = None
+            continue
+        negaciones_norm = [normalizar_busqueda(n) for n in _negaciones_empate]
+        hay_negacion = any(neg in contexto for neg in negaciones_norm)
+        if not hay_negacion:
+            patrones_x = ["empate", "pick x", "resultado x", "prediccion x", "veredicto empate"]
+            if any(pat in contexto for pat in patrones_x):
+                pred = "X"
+        if pred is None:
+            patrones_v = [f"{visitante_norm} gana", f"gana {visitante_norm}",
+                          f"victoria {visitante_norm}", "pick 2", "resultado 2"]
+            if any(pat in contexto for pat in patrones_v):
+                pred = "2"
+        if pred is None:
+            patrones_l = [f"{local_norm} gana", f"gana {local_norm}",
+                          f"victoria {local_norm}", "pick 1", "resultado 1"]
+            if any(pat in contexto for pat in patrones_l):
+                pred = "1"
+        picks[key] = pred
+    return picks
+
+# ── BLOQUE 5: Confianza normalizada
+def normalizar_confianza(conf):
+    c = normalizar_busqueda(str(conf or "media"))
+    if "alta media" in c: return "alta-media"
+    if "media baja" in c: return "media-baja"
+    if "alta" in c: return "alta"
+    if "baja" in c: return "baja"
+    return "media"
+
+_pesos_confianza = {
+    "alta": 1.5,
+    "alta-media": 1.2,
+    "media": 1.0,
+    "media-baja": 0.7,
+    "baja": 0.5
+}
+
+# ── BLOQUE 6: Consenso ponderado y desempate sin inventar
+def resolver_pred_por_votos(votos):
+    """Desempate sin inventar. Si empate 1 vs 2 sin X votada: None."""
+    peso_total = sum(votos.values())
+    if peso_total <= 0: return None
+    max_voto = max(votos.values())
+    if max_voto <= 0: return None
+    candidatos = [k for k, v in votos.items() if v == max_voto]
+    if len(candidatos) == 1: return candidatos[0]
+    if "X" in candidatos: return "X"
+    return None  # Empate 1 vs 2 sin X: no inventar
+
+def extraer_pick_base(respuestas_ias, partido):
+    votos = {"1": 0.0, "X": 0.0, "2": 0.0}
+    n_validas = 0
+    for ia_resp in respuestas_ias:
+        picks_json = extraer_picks_estructurados(ia_resp, [partido])
+        if partido["key"] in picks_json:
+            item = picks_json[partido["key"]]
+            pred_ia = item.get("pred")
+            if pred_ia in votos:
+                conf_norm = normalizar_confianza(item.get("confianza", "media"))
+                votos[pred_ia] += _pesos_confianza.get(conf_norm, 1.0)
+                n_validas += 1
+                continue
+        picks_txt = extraer_picks_de_texto(ia_resp.get("respuesta", ""), [partido])
+        pred_ia = picks_txt.get(partido["key"])
+        if pred_ia in votos:
+            votos[pred_ia] += 1.0
+            n_validas += 1
+    if n_validas == 0:
+        return None, 0.0, "Sin prediccion valida", True
+    pred = resolver_pred_por_votos(votos)
+    if pred is None:
+        return None, 0.0, "Empate matematico irresoluble", True
+    peso_total = sum(votos.values())
+    consenso = votos[pred] / peso_total if peso_total > 0 else 0.0
+    es_incierto = n_validas < 3
+    if pred == "1":
+        resultado = f"{partido['local']} gana"
+    elif pred == "X":
+        resultado = "Empate"
+    else:
+        resultado = f"{partido['visitante']} gana"
+    if es_incierto:
+        resultado += " [verificar]"
+    return pred, consenso, resultado, es_incierto
+
+# ── BLOQUE 7: Capa 0 bookmaker (observacion de mercado)
+def ejecutar_capa0(partido, respuestas_ias):
+    try:
+        c1 = float(partido.get("cuota_1", 2.0))
+        cx = float(partido.get("cuota_x", 3.5))
+        c2 = float(partido.get("cuota_2", 3.0))
+        if c1 <= 0 or cx <= 0 or c2 <= 0: return "normal"
+        suma = (1/c1) + (1/cx) + (1/c2)
+    except (ZeroDivisionError, TypeError, ValueError):
+        return "normal"
+    senal_cuota = (1.0 < c1 < 1.45) or (1.0 < c2 < 1.45)
+    local_norm = normalizar_busqueda(partido.get("local", ""))
+    visitante_norm = normalizar_busqueda(partido.get("visitante", ""))
+    palabras_deportivas = [
+        "baja", "lesion", "rotacion", "fatiga", "sancion", "tarjeta",
+        "clasificado", "h2h", "bloque bajo", "desgaste", "suplente", "reserva"
+    ]
+    senal_deportiva = False
+    for r in respuestas_ias:
+        texto_r = normalizar_busqueda(r.get("respuesta", ""))
+        if local_norm in texto_r or visitante_norm in texto_r:
+            for palabra in palabras_deportivas:
+                patron = r'(?<![a-z0-9])' + re.escape(normalizar_busqueda(palabra)) + r'(?![a-z0-9])'
+                if re.search(patron, texto_r):
+                    senal_deportiva = True
+                    break
+        if senal_deportiva: break
+    if senal_cuota and senal_deportiva: return "trampa"
+    px = (1/cx) / suma if suma > 0 else 0
+    menciones_empate = sum(
+        1 for r in respuestas_ias
+        if menciona_empate_valido(r.get("respuesta", ""), local_norm, visitante_norm)
+    )
+    if px > 0.30 and cx > 4.00 and menciones_empate >= 2: return "valor_oculto"
+    return "normal"
+
+# ── BLOQUE 8: construir_picks_base — función lógica pura (NO st.error/st.warning)
+def construir_picks_base(respuestas_ias, partidos):
+    """Retorna: picks_base, diagnostico. No llama st.error ni st.warning."""
+    picks_base = {}
+    diagnostico = {
+        "faltantes": [],
+        "fallback_usado": [],
+        "keys_no_reconocidas": [],
+        "hard_stop": False,
+        "motivo_hard_stop": ""
+    }
+    for p in partidos:
+        pred, consenso, resultado, es_incierto = extraer_pick_base(respuestas_ias, p)
+        if pred is None:
+            nombre_partido = f"{p['local']} vs {p['visitante']}"
+            diagnostico["faltantes"].append(nombre_partido)
+            diagnostico["hard_stop"] = True
+            diagnostico["motivo_hard_stop"] = (
+                f"Sin prediccion valida para: {nombre_partido}. "
+                "No se fabricaron picks automaticos."
+            )
+            continue
+        if pred == "1": cuota_ref = float(p.get("cuota_1", 2.0))
+        elif pred == "X": cuota_ref = float(p.get("cuota_x", 3.5))
+        else: cuota_ref = float(p.get("cuota_2", 3.0))
+        local_norm_pick = normalizar_busqueda(p.get("local", ""))
+        visitante_norm_pick = normalizar_busqueda(p.get("visitante", ""))
+        palabras_dep = [
+            "baja", "lesion", "rotacion", "fatiga", "sancion", "tarjeta",
+            "clasificado", "h2h", "bloque bajo", "desgaste", "suplente",
+            "reserva", "duda", "ausencia", "lesionado"
+        ]
+        tiene_razon_dep = False
+        for r_dep in respuestas_ias:
+            txt_dep = normalizar_busqueda(r_dep.get("respuesta", ""))
+            if local_norm_pick in txt_dep or visitante_norm_pick in txt_dep:
+                for pal in palabras_dep:
+                    pat = r'(?<![a-z0-9])' + re.escape(normalizar_busqueda(pal)) + r'(?![a-z0-9])'
+                    if re.search(pat, txt_dep):
+                        tiene_razon_dep = True
+                        break
+            if tiene_razon_dep: break
+        menciones_x = sum(
+            1 for r in respuestas_ias
+            if menciona_empate_valido(r.get("respuesta", ""), local_norm_pick, visitante_norm_pick)
+        )
+        picks_base[p["key"]] = {
+            "local": p["local"],
+            "visitante": p["visitante"],
+            "key": p["key"],
+            "pred": pred,
+            "equipo_resultado": resultado,
+            "consenso_ias": consenso,
+            "cuota_ref": cuota_ref,
+            "senal_bookmaker": p.get("senal_bookmaker", "normal"),
+            "es_incierto": es_incierto,
+            "tiene_razon_deportiva": tiene_razon_dep,
+            "menciones_empate_validas": menciones_x,
+            "es_variacion": False
+        }
+    return picks_base, diagnostico
+
+# ── BLOQUE 9: Calcular cuota total y construir universo
+def calcular_cuota_total(picks, partidos_dict):
+    cuota = 1.0
+    for pick in picks:
+        p = partidos_dict.get(pick.get("key", ""), {})
+        pred = pick.get("pred", "1")
+        try:
+            if pred == "1": c = float(p.get("cuota_1", 2.0))
+            elif pred == "X": c = float(p.get("cuota_x", 3.5))
+            else: c = float(p.get("cuota_2", 3.0))
+            if c > 0: cuota *= c
+        except (ValueError, TypeError):
+            cuota *= 2.0
+    return round(cuota, 2)
+
+def construir_universo(picks_base, variaciones, tipo, partidos_dict, partidos_ref):
+    picks = []
+    for key, pb in picks_base.items():
+        nuevo_pred = variaciones.get(key, pb["pred"])
+        # PUERTA GLOBAL: variacion solo si hay fundamento deportivo
+        if nuevo_pred != pb["pred"]:
+            permitido = (
+                float(pb.get("consenso_ias", 1.0)) < 0.60 or
+                pb.get("senal_bookmaker") in ["trampa", "valor_oculto"] or
+                pb.get("tiene_razon_deportiva", False) or
+                (nuevo_pred == "X" and pb.get("menciones_empate_validas", 0) >= 2)
+            )
+            if not permitido:
+                nuevo_pred = pb["pred"]  # revertir sin error
+        if nuevo_pred == "1":
+            resultado = f"{pb['local']} gana"
+        elif nuevo_pred == "X":
+            resultado = "Empate"
+        else:
+            resultado = f"{pb['visitante']} gana"
+        picks.append({
+            "local": pb["local"], "visitante": pb["visitante"],
+            "key": key, "pred": nuevo_pred,
+            "equipo_resultado": resultado,
+            "consenso_ias": pb["consenso_ias"],
+            "cuota_ref": pb["cuota_ref"],
+            "senal_bookmaker": pb["senal_bookmaker"],
+            "es_incierto": pb.get("es_incierto", False),
+            "es_variacion": nuevo_pred != pb["pred"]
+        })
+    if len(picks) != len(partidos_ref):
+        return None
+    cuota_total = calcular_cuota_total(picks, partidos_dict)
+    etiqueta_riesgo = ""
+    if cuota_total > 1000: etiqueta_riesgo = "Muy alto riesgo / Loteria"
+    elif cuota_total > 100: etiqueta_riesgo = "Alto riesgo / Entretenimiento"
+    return {
+        "tipo": tipo, "picks": picks,
+        "cuota_total": cuota_total,
+        "etiqueta_riesgo": etiqueta_riesgo,
+        "numero": 0
+    }
+
+# ── BLOQUE 10: Empate con fundamento real
+def tiene_empate_fundamento(picks_base, respuestas_ias):
+    """Empate SOLO si: pred==X, valor_oculto, o 2+ IAs mencionan empate valido."""
+    candidatos = []
+    for key, pb in picks_base.items():
+        local_norm = normalizar_busqueda(pb["local"])
+        visitante_norm = normalizar_busqueda(pb["visitante"])
+        menciones_empate = sum(
+            1 for r in respuestas_ias
+            if menciona_empate_valido(r.get("respuesta", ""), local_norm, visitante_norm)
+        )
+        if (pb.get("pred") == "X" or
+                pb.get("senal_bookmaker") == "valor_oculto" or
+                menciones_empate >= 2):
+            candidatos.append(key)
+    return candidatos
+
+# ── BLOQUE 11: Anti-duplicación
+def hash_universo(picks):
+    return "|".join([
+        f"{str(p.get('key', '?'))}:{str(p.get('pred', '?'))}"
+        for p in picks
+    ])
+
+def contar_diferencias(u1, u2):
+    difs = 0
+    b = u2.get("picks", [])
+    for i, p in enumerate(u1.get("picks", [])):
+        if i < len(b) and p.get("pred") != b[i].get("pred"):
+            difs += 1
+    return difs
+
+def filtrar_universos(candidatos, n_universos, n_partidos):
+    min_dif = 1 if n_partidos <= 3 else 2
+    hashes = set()
+    validos = []
+    for u in candidatos:
+        if u is None: continue
+        h = hash_universo(u.get("picks", []))
+        if h in hashes: continue
+        if validos and any(contar_diferencias(u, prev) < min_dif for prev in validos):
+            continue
+        hashes.add(h)
+        u["numero"] = len(validos) + 1
+        validos.append(u)
+        if len(validos) >= n_universos: break
+    return validos
+
+def generar_bloque_key(partidos, torneo=""):
+    datos = {
+        "torneo": str(torneo or "").strip(),
+        "partidos": [{
+            "local": p.get("local", "").strip(),
+            "visitante": p.get("visitante", "").strip(),
+            "fecha": str(p.get("fecha", "")).strip(),
+            "hora": str(p.get("hora", "")).strip(),
+            "c1": str(p.get("cuota_1", "")),
+            "cx": str(p.get("cuota_x", "")),
+            "c2": str(p.get("cuota_2", ""))
+        } for p in partidos]
+    }
+    return hashlib.md5(
+        json.dumps(datos, sort_keys=True, ensure_ascii=False).encode()
+    ).hexdigest()
+
+# ── Ejecutar Mesa IA en paralelo con timeout=15s por IA
+def ejecutar_mesa_ia_paralelo(partidos, prompts):
+    """5 IAs en paralelo. timeout=15s. Retorna lista de {ia, respuesta, ok, tiempo}."""
+    _ias_mv = ["ChatGPT", "Claude", "Gemini", "Groq", "Mistral"]
+
+    def _run_single_mv(ia_nombre):
+        prompt_ia = prompts.get(ia_nombre, "")
+        if not prompt_ia:
+            return {"ia": ia_nombre, "respuesta": "", "ok": False, "tiempo": 0}
+        t0 = time.time()
+        try:
+            if ia_nombre == "ChatGPT": r = openai_fn(prompt_ia)
+            elif ia_nombre == "Claude": r = claude_fn(prompt_ia)
+            elif ia_nombre == "Gemini":
+                r = gemini_deporte_fn(prompt_ia)
+                if not r.get("ok"):
+                    r = {"ia": "Gemini", "respuesta": "", "ok": False, "tiempo": 0}
+            elif ia_nombre == "Groq": r = groq_fn(prompt_ia)
+            elif ia_nombre == "Mistral": r = mistral_fn(prompt_ia)
+            else: r = {"ia": ia_nombre, "respuesta": "", "ok": False, "tiempo": 0}
+        except Exception as e:
+            r = {"ia": ia_nombre, "respuesta": f"Error: {str(e)[:80]}", "ok": False, "tiempo": 0}
+        r["ia"] = ia_nombre
+        r["tiempo"] = round(time.time() - t0, 2)
+        return r
+
+    resultados = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+        futs = {ex.submit(_run_single_mv, ia): ia for ia in _ias_mv}
+        for fut in concurrent.futures.as_completed(futs):
+            ia = futs[fut]
+            try:
+                r = fut.result(timeout=15)
+            except concurrent.futures.TimeoutError:
+                r = {"ia": ia, "respuesta": "", "ok": False, "tiempo": 15}
+            except Exception as e:
+                r = {"ia": ia, "respuesta": f"Error: {str(e)[:80]}", "ok": False, "tiempo": 0}
+            resultados.append(r)
+    return resultados
+
+# ── Generar Multiverso (pool minimo 60 candidatos)
+def generar_multiverso(picks_base, partidos, max_universos, respuestas_ias, partidos_dict):
+    """Genera pool de universos alternativos. Minimo 60 candidatos."""
+    candidatos = []
+    _tipos_var = ["1", "X", "2"]
+    _objetivo = max(max_universos * 3, 60)
+
+    # U1: Consenso deportivo (picks base sin variaciones)
+    u1 = construir_universo(picks_base, {}, "Consenso deportivo", partidos_dict, partidos)
+    if u1: candidatos.append(u1)
+
+    # U2: Empates con fundamento o variacion por menor consenso
+    candidatos_empate = tiene_empate_fundamento(picks_base, respuestas_ias)
+    if candidatos_empate:
+        vars_u2 = {k: "X" for k in candidatos_empate[:2]}
+        tipo_u2 = "Empates estructurales"
+    else:
+        if picks_base:
+            menor = min(picks_base.values(), key=lambda x: x["consenso_ias"])
+            pred_actual = menor["pred"]
+            segunda = "2" if pred_actual == "1" else ("1" if pred_actual == "2" else "2")
+            vars_u2 = {menor["key"]: segunda}
+            tipo_u2 = "Balanceado por menor consenso"
+        else:
+            vars_u2 = {}; tipo_u2 = "Sin variacion"
+    u2 = construir_universo(picks_base, vars_u2, tipo_u2, partidos_dict, partidos)
+    if u2: candidatos.append(u2)
+
+    # Variaciones simples (1 partido cambia)
+    keys_ord = sorted(picks_base.keys(), key=lambda k: picks_base[k]["consenso_ias"])
+    for key in keys_ord:
+        pb = picks_base[key]
+        for pred_alt in _tipos_var:
+            if pred_alt == pb["pred"]: continue
+            u = construir_universo(
+                picks_base, {key: pred_alt},
+                f"Alt {pb['local']} -> {pred_alt}",
+                partidos_dict, partidos
+            )
+            if u: candidatos.append(u)
+            if len(candidatos) >= _objetivo: break
+        if len(candidatos) >= _objetivo: break
+
+    # Combinaciones de 2 variaciones
+    if len(candidatos) < _objetivo:
+        for i, k1 in enumerate(keys_ord[:5]):
+            for k2 in keys_ord[i+1:6]:
+                pb1 = picks_base[k1]; pb2 = picks_base[k2]
+                for p1 in _tipos_var:
+                    if p1 == pb1["pred"]: continue
+                    for p2 in _tipos_var:
+                        if p2 == pb2["pred"]: continue
+                        u = construir_universo(
+                            picks_base, {k1: p1, k2: p2},
+                            f"Combo {pb1['local'][:8]}/{pb2['local'][:8]}",
+                            partidos_dict, partidos
+                        )
+                        if u: candidatos.append(u)
+                        if len(candidatos) >= _objetivo: break
+                    if len(candidatos) >= _objetivo: break
+                if len(candidatos) >= _objetivo: break
+            if len(candidatos) >= _objetivo: break
+
+    return candidatos
 
 # ══════════════════════════════════════════════════════════════════════════════
 # INICIO — DASHBOARD CON NAOMI ❤️
@@ -2104,8 +2649,9 @@ Empate 4.00
                         st.session_state["ftbl_torneo_activo"]=tor_ok
                         st.session_state["ftbl_partidos_preview"]=[]
                         st.session_state["ftbl_mc"]=st.session_state.get("ftbl_mc",0)+1
-                        # Limpiar análisis anteriores
-                        for k in ["ftbl_rutas_150","ftbl_resp_ias","ftbl_sintesis","ftbl_coincidencias"]:
+                        # Limpiar análisis anteriores (rutas legacy + multiverso cache)
+                        for k in ["ftbl_rutas_150","ftbl_resp_ias","ftbl_sintesis","ftbl_coincidencias",
+                                  "bloque_key_cache","diagnostico_cache","picks_base_cache","universos_cache","resp_ias_cache"]:
                             st.session_state.pop(k,None)
                         st.success(f"✅ {len(preview)} partidos activados. Ve a 🎯 Veredicto IA / Tickets")
                         st.rerun()
@@ -2128,7 +2674,8 @@ Empate 4.00
                     st.session_state["ftbl_liga_activa"]=b.get("liga","")
                     st.session_state["ftbl_jor_activa"]=b.get("jornada","")
                     st.session_state["ftbl_torneo_activo"]=detectar_torneo(b.get("liga",""),b.get("jornada",""))
-                    for k in ["ftbl_rutas_150","ftbl_resp_ias","ftbl_sintesis","ftbl_coincidencias"]:
+                    for k in ["ftbl_rutas_150","ftbl_resp_ias","ftbl_sintesis","ftbl_coincidencias",
+                              "bloque_key_cache","diagnostico_cache","picks_base_cache","universos_cache","resp_ias_cache"]:
                         st.session_state.pop(k,None)
                     st.success(f"✅ Bloque activado: {len(parts)} partidos. Ve a 🎯 Veredicto IA / Tickets")
                     st.rerun()
@@ -2159,579 +2706,199 @@ Empate 4.00
                         c2.metric("1",f"{float(p.get('cuota_1',2.0)):.2f}")
                         c3.metric("X/2",f"{float(p.get('cuota_x',3.2)):.2f}/{float(p.get('cuota_2',3.5)):.2f}")
 
-                n_rutas=st.slider("🎯 Mostrar N mejores rutas",min_value=5,max_value=20,value=10,step=1)
+                # ── FASE 1.4: Construir partidos con keys
+                _partidos_keyed = []
+                for _pk_item in partidos_act:
+                    _pk_copy = dict(_pk_item)
+                    if "key" not in _pk_copy:
+                        _pk_copy["key"] = generar_key(_pk_copy.get("local",""), _pk_copy.get("visitante",""))
+                    _partidos_keyed.append(_pk_copy)
+                _partidos_dict_mv = {_p["key"]: _p for _p in _partidos_keyed}
 
-                # Helper definido en scope externo para que el display lo acceda en cada rerender
-                def _ticket_txt(nombre,picks_sel,monto,ligat,jorl,nota=""):
-                    n_ias_ok=len(st.session_state.get("ftbl_ias_ok",[]))
-                    lines=[f"🎟️ {nombre} — {ligat}",f"📅 {jorl}","━"*24]
-                    cuota_t=1.0
-                    for k,v in picks_sel:
-                        local,visitante=k.split("|")
-                        lines.append(f"⚽ {local} vs {visitante}")
-                        lines.append(f"   → {v['pred_txt']} ({v['pred']}) @ {v['cuota']:.2f}")
-                        lines.append(f"   IAs: {v['n_ias']}/5 | {v['conf']} | Riesgo: {v['riesgo']}")
-                        cuota_t*=v["cuota"]
-                    lines+=["━"*24,f"💰 Apuesta ${monto:,.0f} → Retorno: ${monto*cuota_t:,.0f}",
-                            f"📊 Cuota total: {cuota_t:.2f}x",f"📱 jandrext-ia.streamlit.app | {n_ias_ok}/5 IAs"]
-                    if nota: lines.append(f"📌 {nota}")
-                    return "\n".join(lines)
+                # ── Build prompts (construir_prompt_partidos PRIMERO + rol)
+                _prompt_partidos_mv = construir_prompt_partidos(_partidos_keyed)
+                _partidos_str_mv = "\n".join([
+                    f"{p.get('local','')} vs {p.get('visitante','')} | 1:{float(p.get('cuota_1',2.0)):.2f} X:{float(p.get('cuota_x',3.2)):.2f} 2:{float(p.get('cuota_2',3.5)):.2f}"
+                    for p in _partidos_keyed
+                ])
+                BASE_DEPORTE=(
+                    f"Eres un analista experto en apuestas deportivas 1X2.\n"
+                    f"Torneo: {torneo_act}. Analiza SOLO sobre fútbol y apuestas.\n"
+                    "No menciones contextos empresariales ni temas ajenos al deporte.\n"
+                )
+                roles_futbol={
+                    "ChatGPT":(BASE_DEPORTE+"ROL: Prediccion base.\nPara cada partido predice 1/X/2 basandote en: fuerza estructural, forma reciente, calidad de plantilla, necesidad de puntos, jugadores disponibles y contexto del torneo. No uses las cuotas para decidir el pick. No puedes omitir ningun partido. Di 1, X o 2 por cada uno."),
+                    "Claude":(BASE_DEPORTE+"ROL: Auditor de riesgos.\nDetecta favoritos peligrosos, empates estructurales, rotaciones, partidos trampa y riesgos ocultos. No uses cuotas como criterio. Usa analisis deportivo puro. Indica riesgo bajo/medio/alto por partido."),
+                    "Gemini":(BASE_DEPORTE+f"ROL: Contextualizador {torneo_act}.\nAporta: forma reciente, H2H conocido, jugadores clave, bajas, sanciones, motivacion, fase del torneo, noticias relevantes. Si no tienes datos verificables: [SIN DATOS]. Analiza el deporte primero, la cuota solo como referencia al final."),
+                    "Groq":(BASE_DEPORTE+"ROL: Ranking rapido.\nOrdena los partidos por claridad deportiva. Top picks simples y riesgos principales. Sin cuotas. Una linea por partido: equipo + 1/X/2 + razon deportiva breve."),
+                    "Mistral":(BASE_DEPORTE+"ROL: Perspectiva contraria.\nBusca empates estructurales y sorpresas viables. No inventes. No uses cuota para decidir.\nSENALES DE EMPATE: fuerzas similares, bajo volumen ofensivo esperado, empate beneficia a ambos, estilos conservadores, H2H reciente cerrado, ausencia de goleadores, fase donde no perder es suficiente.\nSENALES DE SORPRESA: favorito con bajas criticas, favorito ya clasificado puede rotar, favorito sufre contra bloque bajo, rival con transicion rapida o balon parado, rival necesita ganar si o si.")
+                }
+                _prompts_ias_mv = {
+                    ia: _prompt_partidos_mv + "\n\n" + roles_futbol[ia] + f"\n\nPARTIDOS:\n{_partidos_str_mv}"
+                    for ia in ["ChatGPT", "Claude", "Gemini", "Groq", "Mistral"]
+                }
 
-                if st.button("🚀 Analizar con 5 IAs y generar tickets",type="primary",use_container_width=True):
-                    with st.spinner("🧠 5 IAs analizando (15-30s)..."):
-                        import random, math
+                # ── BLOQUE 12: Cache con bloque_key + Hard Stop
+                _bloque_key_mv = generar_bloque_key(_partidos_keyed, torneo=torneo_act)
 
-                        ESTRATEGIAS=[
-                            ("VICTORIA_LOCAL",   {"c1":1.4,"cx":0.3,"c2":0.3}),
-                            ("EMPATE_TECHNICO",  {"c1":0.3,"cx":1.4,"c2":0.3}),
-                            ("VISITANTE_SORPRESA",{"c1":0.3,"cx":0.3,"c2":1.4}),
-                            ("ALTA_CONFIANZA",   {"c1":0.5,"cx":0.3,"c2":0.2}),
-                            ("CUOTA_VALOR",      {"c1":0.2,"cx":0.4,"c2":0.4}),
-                            ("FORMA_RECIENTE",   {"c1":0.45,"cx":0.35,"c2":0.2}),
-                            ("POSICION_TABLA",   {"c1":0.5,"cx":0.25,"c2":0.25}),
-                            ("MIXTA_EQUILIBRADA",{"c1":0.35,"cx":0.35,"c2":0.3}),
-                            ("CONTRA_CORRIENTE", {"c1":0.2,"cx":0.3,"c2":0.5}),
-                        ]
-                        # En fase de torneo Mundial: POSICION_TABLA peso=0, CUOTA_VALOR x2
-                        if es_mundial or "Mundial" in torneo_act:
-                            ESTRATEGIAS=[e for e in ESTRATEGIAS if e[0]!="POSICION_TABLA"]
-
-                        def generar_prediccion(partido,pesos):
-                            c1=float(partido.get("cuota_1",2.0))
-                            cx=float(partido.get("cuota_x",3.2))
-                            c2=float(partido.get("cuota_2",3.5))
-                            p1=1/c1; px=1/cx; p2=1/c2
-                            total=p1+px+p2
-                            p1/=total; px/=total; p2/=total
-                            s1=p1*pesos["c1"]; sx=px*pesos["cx"]; s2=p2*pesos["c2"]
-                            pred=["1","X","2"][[s1,sx,s2].index(max(s1,sx,s2))]
-                            cuota={"1":c1,"X":cx,"2":c2}[pred]
-                            prob={"1":p1,"X":px,"2":p2}[pred]
-                            # EV = probabilidad_implícita * cuota - 1
-                            ev=round((prob*cuota)-1,4)
-                            return pred,cuota,ev
-
-                        n_p=len(partidos_act)
-                        rutas_raw=[]
-                        configs=[(min(10,n_p),50),(min(15,n_p),50),(min(20,n_p),50)]
-                        seen_hashes=set()
-                        for n_sel,n_gen in configs:
-                            for _ in range(n_gen):
-                                sel=random.sample(partidos_act,min(n_sel,n_p))
-                                est_nom,pesos=random.choice(ESTRATEGIAS)
-                                picks=[]
-                                cuota_total=1.0
-                                ev_total=0.0
-                                n_empates=0
-                                for p in sel:
-                                    pred,cuota,ev=generar_prediccion(p,pesos)
-                                    if pred=="X": n_empates+=1
-                                    picks.append({"local":p.get("local",""),"visitante":p.get("visitante",""),
-                                                  "pred":pred,"cuota":cuota,"ev":ev})
-                                    cuota_total*=cuota
-                                    ev_total+=ev
-                                # Límite empates por longitud de ruta
-                                max_emp={10:4,15:4,20:5}.get(len(picks),4)
-                                if n_empates>max_emp: continue
-                                # Evitar rutas idénticas
-                                ruta_hash=hashlib.md5(str(sorted([(pk["local"],pk["pred"]) for pk in picks])).encode()).hexdigest()
-                                if ruta_hash in seen_hashes: continue
-                                seen_hashes.add(ruta_hash)
-                                rutas_raw.append({
-                                    "estrategia":est_nom,"picks":picks,
-                                    "cuota_total":round(cuota_total,2),
-                                    "ev_total":round(ev_total/len(picks),4) if picks else 0,
-                                    "n_picks":len(picks),"n_empates":n_empates
-                                })
-
-                        # Control exposición 65%
-                        total_rutas=len(rutas_raw) or 1
-                        match_counts={}
-                        for r in rutas_raw:
-                            for pk in r["picks"]:
-                                k=f"{pk['local']}|{pk['pred']}"
-                                match_counts[k]=match_counts.get(k,0)+1
-                        rutas_ok=[r for r in rutas_raw if not any(
-                            match_counts.get(f"{pk['local']}|{pk['pred']}",0)/total_rutas>0.65
-                            for pk in r["picks"]
-                        )]
-                        if len(rutas_ok)<30: rutas_ok=rutas_raw
-
-                        for r in rutas_ok:
-                            r["score_final"]=round(r["ev_total"]*0.5+math.log(max(r["cuota_total"],1.01))*0.3+r["n_picks"]*0.02,4)
-                        rutas_ok.sort(key=lambda x:x["score_final"],reverse=True)
-                        rutas_150=rutas_ok[:150]
-
-                        # 5 IAs en paralelo
-                        top_n=min(5,len(rutas_150))
-                        top_rutas=rutas_150[:top_n]
-                        partidos_str="\n".join([
-                            f"{p.get('local','')} vs {p.get('visitante','')} | 1:{float(p.get('cuota_1',2.0)):.2f} X:{float(p.get('cuota_x',3.2)):.2f} 2:{float(p.get('cuota_2',3.5)):.2f}"
-                            for p in partidos_act
-                        ])
-                        rutas_str="\n".join([
-                            f"Ruta {i+1}: {r['estrategia']} | {r['n_picks']} picks | Cuota:{r['cuota_total']:.2f} | EV:{r['ev_total']:.3f} | "+
-                            " | ".join([f"{pk['local']} {pk['pred']}@{pk['cuota']:.2f}" for pk in r['picks'][:4]])
-                            for i,r in enumerate(top_rutas)
-                        ])
-
-                        BASE_DEPORTE=(
-                            f"Eres un analista experto en apuestas deportivas 1X2.\n"
-                            f"Torneo: {torneo_act}. Analiza SOLO sobre fútbol y apuestas.\n"
-                            "No menciones contextos empresariales ni temas ajenos al deporte.\n"
-                        )
-                        roles_futbol={
-                            "ChatGPT":(BASE_DEPORTE+"ROL: Prediccion base.\nPara cada partido predice 1/X/2 basandote en: fuerza estructural, forma reciente, calidad de plantilla, necesidad de puntos, jugadores disponibles y contexto del torneo. No uses las cuotas para decidir el pick. No puedes omitir ningun partido. Di 1, X o 2 por cada uno."),
-                            "Claude":(BASE_DEPORTE+"ROL: Auditor de riesgos.\nDetecta favoritos peligrosos, empates estructurales, rotaciones, partidos trampa y riesgos ocultos. No uses cuotas como criterio. Usa analisis deportivo puro. Indica riesgo bajo/medio/alto por partido."),
-                            "Gemini":(BASE_DEPORTE+f"ROL: Contextualizador {torneo_act}.\nAporta: forma reciente, H2H conocido, jugadores clave, bajas, sanciones, motivacion, fase del torneo, noticias relevantes. Si no tienes datos verificables: [SIN DATOS]. Analiza el deporte primero, la cuota solo como referencia al final."),
-                            "Groq":(BASE_DEPORTE+"ROL: Ranking rapido.\nOrdena los partidos por claridad deportiva. Top picks simples y riesgos principales. Sin cuotas. Una linea por partido: equipo + 1/X/2 + razon deportiva breve."),
-                            "Mistral":(BASE_DEPORTE+"ROL: Perspectiva contraria.\nBusca empates estructurales y sorpresas viables. No inventes. No uses cuota para decidir.\nSENALES DE EMPATE: fuerzas similares, bajo volumen ofensivo esperado, empate beneficia a ambos, estilos conservadores, H2H reciente cerrado, ausencia de goleadores, fase donde no perder es suficiente.\nSENALES DE SORPRESA: favorito con bajas criticas, favorito ya clasificado puede rotar, favorito sufre contra bloque bajo, rival con transicion rapida o balon parado, rival necesita ganar si o si.")
-                        }
-                        def _run_ia_futbol(ia_nombre):
-                            rol_ia=roles_futbol.get(ia_nombre,"")
-                            prompt_ia=(
-                                f"{rol_ia}\n\n"
-                                f"PARTIDOS ({liga_act} — {jor_act}):\n{partidos_str}\n\n"
-                                f"TOP {top_n} RUTAS:\n{rutas_str}\n\n"
-                                "Responde en máximo 300 palabras. Solo análisis deportivo."
+                if st.session_state.get("bloque_key_cache") != _bloque_key_mv:
+                    with st.spinner("🧠 Mesa IA analizando — Multiverso Odds-Blind (15-30s)..."):
+                        _respuestas_ias_mv = ejecutar_mesa_ia_paralelo(_partidos_keyed, _prompts_ias_mv)
+                        for _p_c0 in _partidos_keyed:
+                            _p_c0["senal_bookmaker"] = ejecutar_capa0(_p_c0, _respuestas_ias_mv)
+                        _picks_base_mv, _diagnostico_mv = construir_picks_base(_respuestas_ias_mv, _partidos_keyed)
+                        st.session_state["diagnostico_cache"] = _diagnostico_mv
+                        st.session_state["picks_base_cache"] = _picks_base_mv
+                        st.session_state["bloque_key_cache"] = _bloque_key_mv
+                        st.session_state["resp_ias_cache"] = _respuestas_ias_mv
+                        if not _diagnostico_mv.get("hard_stop", False):
+                            _pool_mv = generar_multiverso(
+                                _picks_base_mv, _partidos_keyed, 60, _respuestas_ias_mv, _partidos_dict_mv
                             )
-                            try:
-                                if ia_nombre=="ChatGPT": r=openai_fn(prompt_ia)
-                                elif ia_nombre=="Claude": r=claude_fn(prompt_ia)
-                                elif ia_nombre=="Gemini":
-                                    r=gemini_deporte_fn(prompt_ia)
-                                    if not r.get("ok"):
-                                        r={"ia":"Gemini","icono":"🔵","respuesta":"Gemini no disponible.","ok":False,"tiempo":0}
-                                elif ia_nombre=="Groq": r=groq_fn(prompt_ia)
-                                elif ia_nombre=="Mistral": r=mistral_fn(prompt_ia)
-                                else: r={"ia":ia_nombre,"respuesta":"No disponible","ok":False,"tiempo":0}
-                            except Exception as e_ia:
-                                r={"ia":ia_nombre,"respuesta":f"Error: {str(e_ia)[:80]}","ok":False,"tiempo":0}
-                            r["ia"]=ia_nombre
-                            return r
-
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
-                            futs={ex.submit(_run_ia_futbol,ia):ia for ia in _ias_nombres}
-                            resp_futbol={ia:f.result() for f,ia in [(f,futs[f]) for f in concurrent.futures.as_completed(futs)]}
-
-                        ias_ok_list=[ia for ia in _ias_nombres if resp_futbol[ia].get("ok")]
-                        ias_fail_list=[ia for ia in _ias_nombres if not resp_futbol[ia].get("ok")]
-                        n_ias_ok=len(ias_ok_list)
-
-                        # Síntesis consenso con Claude
-                        resp_texts="\n\n".join([
-                            f"**{ia}**: {resp_futbol[ia].get('respuesta','')[:400]}"
-                            for ia in ias_ok_list
-                        ])
-                        sint_fut_prompt=(
-                            "Eres el árbitro deportivo del Consejo de Inteligencias JandrexT.\n"
-                            "Construye la síntesis final bajo enfoque ODDS-BLIND obligatorio.\n\n"
-                            "REGLA MADRE IMPERATIVA:\n"
-                            "Las cuotas NO son argumento principal. La cuota es solo referencia de retorno.\n"
-                            "El análisis se basa ÚNICAMENTE en factores deportivos reales.\n\n"
-                            "PROHIBIDO en la síntesis principal:\n"
-                            "- Mencionar valores numéricos de cuotas como argumento: @1.23, @1.52, X:3.35\n"
-                            "- Frases: cuotas 1.2-1.5, cuotas deprimidas, cuota extrema, subvalorado por cuota\n"
-                            "- Razonar con cuota baja igual favorito o cuota alta igual riesgo\n"
-                            "- Usar cuotas para justificar recomendaciones\n\n"
-                            "OBLIGATORIO en la síntesis:\n"
-                            "- Predicción deportiva primero\n"
-                            "- Motivo deportivo: trayectoria, H2H, plantilla, necesidad de puntos, jugadores clave, lesiones, sanciones, contexto del torneo\n"
-                            "- Las cuotas SOLO aparecen al final en seccion Referencia economica\n"
-                            "- Picks escritos como: Francia gana (1), Empate (X), Senegal gana (2). NO como Francia 1 @1.52\n\n"
-                            "VEREDICTO OBLIGATORIO POR PARTIDO:\n"
-                            "Debes entregar veredicto para CADA partido recibido. Ningun partido puede quedar sin prediccion.\n"
-                            "Para cada partido elige 1, X o 2 basado en: trayectoria, forma actual, H2H, necesidad de puntos, calidad de plantilla, jugadores disponibles, lesiones, sanciones, contexto del torneo y riesgo deportivo.\n"
-                            "No uses la cuota para decidir si un pick es recomendado. La cuota solo aparece como referencia economica al final.\n\n"
-                            f"TORNEO: {torneo_act} | {n_ias_ok}/5 IAs analizaron {top_n} rutas.\n\n"
-                            f"ANÁLISIS DE LAS IAs:\n{resp_texts}\n\n"
-                            "ESTRUCTURA OBLIGATORIA:\n\n"
-                            f"SINTESIS ARBITRAL — {torneo_act}\n\n"
-                            "1 RUTA DEPORTIVA RECOMENDADA\n"
-                            "Base construida por trayectoria, forma actual, H2H, necesidad de puntos, plantilla, jugadores clave y contexto.\n"
-                            "Ejemplo: Francia gana (1) | Motivo deportivo: [razon] | Riesgo: [riesgo deportivo]\n\n"
-                            "2 CONFIANZA DEPORTIVA\n"
-                            "Alta: picks con mayor respaldo deportivo\n"
-                            "Media: picks con respaldo moderado\n"
-                            "Baja: picks con menor respaldo\n\n"
-                            "3 PARTIDOS DE MAYOR RIESGO\n"
-                            "Explicar por: estilo de juego, equilibrio tactico, H2H, necesidad de puntos, bajas, rotaciones. NO por cuota.\n\n"
-                            "4 USO EN TICKETS\n"
-                            "Conservador: picks con mayor confianza deportiva\n"
-                            "Balanceado: picks con confianza media\n"
-                            "Fe controlada: empates con logica deportiva\n\n"
-                            "5 REFERENCIA ECONOMICA (unica seccion donde aparecen cuotas)\n"
-                            "Ejemplo: Francia gana — cuota referencia 1.52\n"
-                            "Nota: Las cuotas son referencia de retorno, no criterio del veredicto.\n\n"
-                            "Maximo 350 palabras. Sin mencionar empresas ni contextos ajenos."
-                        )
-                        sint_fut=claude_fn(sint_fut_prompt)
-
-                        # Veredicto por partido (consenso + riesgo)
-                        veredicto_partidos={}
-                        for p in partidos_act:
-                            local=p.get("local","")
-                            visitante=p.get("visitante","")
-                            c1=float(p.get("cuota_1",2.0))
-                            cx=float(p.get("cuota_x",3.2))
-                            c2=float(p.get("cuota_2",3.5))
-                            # Probabilidad implícita normalizada
-                            pr1=1/c1; prx=1/cx; pr2=1/c2
-                            tot=pr1+prx+pr2; pr1/=tot; prx/=tot; pr2/=tot
-                            # Pick de mayor probabilidad
-                            picks_prob={"1":(pr1,c1),"X":(prx,cx),"2":(pr2,c2)}
-                            best_pred=max(picks_prob,key=lambda k:picks_prob[k][0])
-                            best_cuota=picks_prob[best_pred][1]
-                            best_prob=picks_prob[best_pred][0]
-                            ev_partido=round((best_prob*best_cuota)-1,4)
-                            # Contar IAs que mencionan al local favorably
-                            n_ias_favor=0
-                            for ia in ias_ok_list:
-                                txt=resp_futbol[ia].get("respuesta","").lower()
-                                if local.lower()[:5] in txt or visitante.lower()[:5] in txt:
-                                    n_ias_favor+=1
-                            # FIX 3 — Confianza por consenso (independiente del EV)
-                            if n_ias_favor>=4: conf="🟢 Alta confianza"
-                            elif n_ias_favor>=3: conf="🟡 Media confianza"
-                            elif n_ias_favor>=2: conf="🟡 Confianza media"
-                            else: conf="🔴 Baja confianza"
-                            # apta_para: por consenso y cuota — NUNCA "No recomendada" para consenso>=3
-                            _cons_ratio=n_ias_favor/max(n_ias_ok,1)
-                            if _cons_ratio>=0.75 and best_cuota<=2.00:
-                                apta_para="Ticket conservador corto"
-                            elif _cons_ratio>=0.60 and best_cuota<=2.50:
-                                apta_para="Ticket balanceado"
-                            elif _cons_ratio>=0.50 and best_cuota>2.50:
-                                apta_para="Ticket de valor"
-                            elif _cons_ratio<0.50 or (ev_partido<-0.05 and _cons_ratio<0.60):
-                                apta_para="Evitar"
-                            else:
-                                apta_para="Ticket balanceado"
-                            # Riesgo por cuota
-                            if best_cuota<1.5: riesgo="Bajo"
-                            elif best_cuota<2.5: riesgo="Medio"
-                            else: riesgo="Alto"
-                            pred_txt={"1":f"{local} gana","X":"Empate","2":f"{visitante} gana"}.get(best_pred,best_pred)
-                            veredicto_partidos[f"{local}|{visitante}"]={
-                                "pred":best_pred,"pred_txt":pred_txt,
-                                "cuota":best_cuota,"ev":ev_partido,
-                                "n_ias":n_ias_favor,"conf":conf,"riesgo":riesgo,"apta_para":apta_para
-                            }
-
-                        # Generar 3 tickets diferenciados
-                        # Todos los partidos ordenados por consenso (FIX 2+3: sin filtro EV)
-                        todos_picks=[(k,v) for k,v in veredicto_partidos.items()]
-                        todos_picks.sort(key=lambda x:-x[1]["n_ias"])
-                        picks_ev_pos=[(k,v) for k,v in todos_picks if v["ev"]>=0]
-                        picks_ordenados=picks_ev_pos  # para rutas y referencias
-
-                        # FIX 3: Ticket Conservador SIEMPRE generado
-                        # Primero intentar picks con EV>=0 y cuota<=2.50
-                        _cand_conserv=[(k,v) for k,v in todos_picks if v["ev"]>=0 and v["cuota"]<=2.50]
-                        if len(_cand_conserv)>=2:
-                            ticket_conserv=_cand_conserv[:4]
-                            _nota_conserv=""
+                            st.session_state["universos_cache"] = _pool_mv
                         else:
-                            # FIX 3 fallback: top 3 por consenso sin importar EV ni cuota
-                            ticket_conserv=todos_picks[:min(3,len(todos_picks))]
-                            _nota_conserv="No hay picks premium, pero estas son las mejores opciones disponibles para intento controlado."
-                        st.session_state["ftbl_nota_conserv"]=_nota_conserv
+                            st.session_state["universos_cache"] = []
+                else:
+                    _diagnostico_mv = st.session_state.get("diagnostico_cache", {})
+                    _picks_base_mv = st.session_state.get("picks_base_cache", {})
+                    _respuestas_ias_mv = st.session_state.get("resp_ias_cache", [])
 
-                        ticket_balanc=picks_ev_pos[:min(6,len(picks_ev_pos))] or todos_picks[:min(4,len(todos_picks))]
-                        ticket_prem=[(k,v) for k,v in picks_ev_pos if v["conf"]=="🟢 Alta confianza"][:5]
-
-                        gemini_ctx=resp_futbol.get("Gemini",{}).get("respuesta","Sin contexto Gemini")[:300]
-
-                        # Guardar todo
-                        st.session_state["ftbl_rutas_150"]=rutas_150
-                        st.session_state["ftbl_resp_ias"]=resp_futbol
-                        st.session_state["ftbl_sintesis"]=sint_fut
-                        st.session_state["ftbl_veredicto"]=veredicto_partidos
-                        st.session_state["ftbl_tickets"]={
-                            "conservador":ticket_conserv,
-                            "balanceado":ticket_balanc,
-                            "premium":ticket_prem,
-                            "gemini_ctx":gemini_ctx
-                        }
-                        st.session_state["ftbl_ias_ok"]=ias_ok_list
-                        st.session_state["ftbl_ias_fail"]=ias_fail_list
+                # ── HARD STOP — en UI, no en función lógica
+                if _diagnostico_mv.get("hard_stop", False):
+                    st.error(
+                        "⛔ HARD STOP ACTIVO: No se puede generar el Multiverso. "
+                        "Partidos sin predicción válida: " +
+                        ", ".join(_diagnostico_mv.get("faltantes", []))
+                    )
+                    if st.button("🔄 Reintentar análisis IA", key="ftbl_hard_stop_retry"):
+                        for _ks in ["bloque_key_cache","diagnostico_cache","picks_base_cache","universos_cache","resp_ias_cache"]:
+                            st.session_state.pop(_ks, None)
                         st.rerun()
+                    st.stop()
 
-                # ── MOSTRAR RESULTADOS (después del rerun)
-                rutas_150=st.session_state.get("ftbl_rutas_150",[])
-                resp_futbol=st.session_state.get("ftbl_resp_ias",{})
-                sint_fut=st.session_state.get("ftbl_sintesis",{})
-                veredicto_partidos=st.session_state.get("ftbl_veredicto",{})
-                tickets_data=st.session_state.get("ftbl_tickets",{})
-                ias_ok_list=st.session_state.get("ftbl_ias_ok",[])
-                ias_fail_list=st.session_state.get("ftbl_ias_fail",[])
-                n_ias_ok=len(ias_ok_list)
-
-                if rutas_150:
+                # ── BLOQUE 13: Selector + Tabla comparativa + Universos
+                if _picks_base_mv:
                     # Estado IAs
-                    st.markdown(f"**{n_ias_ok}/5 IAs disponibles:** {', '.join(ias_ok_list)}")
-                    if ias_fail_list:
-                        st.caption(f"❌ No disponibles: {', '.join(ias_fail_list)}")
-                    cols5=st.columns(5)
-                    for i,ia in enumerate(_ias_nombres):
-                        r=resp_futbol.get(ia,{})
-                        with cols5[i]:
-                            st.markdown(f"**{_ico_map.get(ia,'⚪')} {ia}**")
-                            st.caption(f"{'✅' if r.get('ok') else '❌'} {r.get('tiempo',0):.1f}s")
-
-                    st.markdown("---")
-
-                    # ── VEREDICTO POR PARTIDO (FASE 1.3: formato completo deportivo)
-                    st.markdown(f"### 🎯 Veredicto por partido ({len(veredicto_partidos)} partidos)")
-                    _conf_clean=lambda c: c.replace("🟢 ","").replace("🟡 ","").replace("🔴 ","").replace(" confianza","").replace("Confianza ","")
-                    _motivo_v={
-                        "Ticket conservador corto":"superioridad deportiva clara, alto consenso entre IAs",
-                        "Ticket balanceado":"ventaja táctica moderada, respaldo de la mayoría de IAs",
-                        "Ticket de valor":"potencial deportivo identificado por las IAs",
-                        "Evitar":"partido equilibrado o con alta incertidumbre deportiva"
-                    }
-                    _rc_map={
-                        ("1","Bajo"):"sorpresa del visitante si hay rotaciones o baja clave del favorito",
-                        ("1","Medio"):"visitante puede robar puntos con contragolpe o balón parado",
-                        ("1","Alto"):"alta posibilidad de empate o sorpresa del visitante",
-                        ("X","Bajo"):"un gol temprano puede romper el equilibrio del partido",
-                        ("X","Medio"):"ambos pueden necesitar los 3 puntos, lo que abre el juego",
-                        ("X","Alto"):"partido muy abierto, el empate es uno de varios escenarios",
-                        ("2","Bajo"):"local con ventaja de campo y presión de afición puede reaccionar",
-                        ("2","Medio"):"local bajo presión busca remontada con apoyo de su público",
-                        ("2","Alto"):"local desesperado atacará con todo, puede surgir el gol",
-                    }
-                    for k,v in veredicto_partidos.items():
-                        local,visitante=k.split("|")
-                        _ct=_conf_clean(v["conf"])
-                        _mot=_motivo_v.get(v["apta_para"],"análisis basado en forma y contexto del torneo")
-                        _rc=_rc_map.get((v["pred"],v["riesgo"]),"factor de incertidumbre siempre presente en el fútbol")
-                        with st.container():
-                            st.markdown(
-                                f"**{local} vs {visitante}**\n\n"
-                                f"→ **Predicción deportiva:** {v['pred_txt']}\n\n"
-                                f"→ **Confianza deportiva:** {_ct}\n\n"
-                                f"→ **Riesgo deportivo:** {v['riesgo']}\n\n"
-                                f"→ **Consenso IAs:** {v['n_ias']}/{n_ias_ok}\n\n"
-                                f"→ **Motivo deportivo:** {_mot}\n\n"
-                                f"→ **Riesgo contrario:** {_rc}\n\n"
-                                f"→ **Uso recomendado:** {v['apta_para']}\n\n"
-                                f"→ *Cuota referencia: {v['cuota']:.2f}*"
-                            )
-                            st.markdown("---")
-                    # ── CAMBIO 2: SELECTOR DE OPORTUNIDADES
-                    _n_partidos_total=len(veredicto_partidos)
-                    if _n_partidos_total>0:
-                        st.markdown("### 🎯 Selector de oportunidades")
-                        _opciones_n=[i for i in [3,4,5,6,7,8,10] if i<=_n_partidos_total]
-                        if not _opciones_n: _opciones_n=[_n_partidos_total]
-                        _def_idx=min(2,len(_opciones_n)-1)
-                        _n_sel=st.selectbox(
-                            "¿Cuántas mejores oportunidades deseas sintetizar?",
-                            options=_opciones_n,
-                            index=_def_idx,
-                            key="ftbl_n_picks_sel"
-                        )
-                        _n_picks_final=min(int(_n_sel),_n_partidos_total)
-                        if int(_n_sel)>_n_partidos_total:
-                            st.warning(f"Solo hay {_n_partidos_total} partidos. Se usarán todos.")
-                        # ── CAMBIO 3: TICKET SINTETIZADO con N mejores (orden deportivo)
-                        _riesgo_num={"Bajo":2,"Medio":1,"Alto":0}
-                        _conf_num={"🟢 Alta confianza":2,"🟡 Media confianza":1,"🟡 Confianza media":1,"🔴 Baja confianza":0}
-                        _todos_verd=[(k2,v2) for k2,v2 in veredicto_partidos.items()]
-                        _picks_dep=sorted(
-                            _todos_verd,
-                            key=lambda x:(x[1]["n_ias"],_riesgo_num.get(x[1]["riesgo"],0),_conf_num.get(x[1]["conf"],0)),
-                            reverse=True
-                        )
-                        _mejores_n=_picks_dep[:_n_picks_final]
-                        # Construir ticket sintetizado
-                        _cuota_acum=1.0
-                        _ticket_lines=[
-                            f"🎟️ TICKET SINTETIZADO — {_n_picks_final} MEJORES OPORTUNIDADES",
-                            f"Torneo: {liga_act} | {jor_act}",
-                            "Modo: Deportivo primero / cuotas solo referencia",
-                            "━"*24,""
-                        ]
-                        _mot_t_map={
-                            "Ticket conservador corto":"superioridad deportiva, alto consenso IAs",
-                            "Ticket balanceado":"ventaja táctica moderada, respaldo mayoría IAs",
-                            "Ticket de valor":"potencial deportivo identificado",
-                            "Evitar":"alta incertidumbre deportiva"
-                        }
-                        for _idx_t,(_pk,_pv) in enumerate(_mejores_n,1):
-                            _pl,_pv2=_pk.split("|")
-                            _ct2=_pv["conf"].replace("🟢 ","").replace("🟡 ","").replace("🔴 ","").replace(" confianza","").replace("Confianza ","")
-                            _mot_t=_mot_t_map.get(_pv["apta_para"],"análisis deportivo")
-                            _ticket_lines.append(f"{_idx_t}. {_pv['pred_txt']}")
-                            _ticket_lines.append(f"   Partido: {_pl} vs {_pv2}")
-                            _ticket_lines.append(f"   Confianza: {_ct2} | Consenso: {_pv['n_ias']}/{n_ias_ok} IAs | Riesgo: {_pv['riesgo']}")
-                            _ticket_lines.append(f"   Motivo: {_mot_t}")
-                            _ticket_lines.append("")
-                            _cuota_acum*=_pv["cuota"]
-                        _ticket_lines+=[
-                            "━"*24,
-                            "📌 Referencia económica:",
-                            "Las cuotas son solo referencia de retorno.",
-                            "No fueron criterio principal de selección.",
-                            "",
-                            f"💰 Cuota total estimada: {_cuota_acum:.2f}x",
-                            f"💰 Apuesta $1.000 → Retorno estimado: ${1000*_cuota_acum:,.0f}"
-                        ]
-                        st.code("\n".join(_ticket_lines),language=None)
-                        st.markdown("---")
-
-                    # ── SÍNTESIS CONSEJO
-                    st.markdown("### 🧠 Síntesis del Consejo")
-                    sint_txt=sint_fut.get("respuesta","") if isinstance(sint_fut,dict) else str(sint_fut)
-                    st.info(sint_txt if sint_txt else "Síntesis no disponible.")
+                    _ias_ok_mv = [r["ia"] for r in _respuestas_ias_mv if r.get("ok")]
+                    _ias_fail_mv = [r["ia"] for r in _respuestas_ias_mv if not r.get("ok")]
+                    st.markdown(f"**{len(_ias_ok_mv)}/5 IAs disponibles:** {', '.join(_ias_ok_mv) if _ias_ok_mv else 'Ninguna'}")
+                    if _ias_fail_mv:
+                        st.caption(f"❌ No disponibles: {', '.join(_ias_fail_mv)}")
+                    _cols5_mv = st.columns(5)
+                    _ico_map_mv = {"ChatGPT":"🟢","Claude":"🟤","Gemini":"🔵","Groq":"🟠","Mistral":"🟡"}
+                    for _i_ia_mv, _ia_nm in enumerate(["ChatGPT","Claude","Gemini","Groq","Mistral"]):
+                        _r_ia_mv = next((r for r in _respuestas_ias_mv if r.get("ia") == _ia_nm), {})
+                        with _cols5_mv[_i_ia_mv]:
+                            st.markdown(f"**{_ico_map_mv.get(_ia_nm,'⚪')} {_ia_nm}**")
+                            st.caption(f"{'✅' if _r_ia_mv.get('ok') else '❌'} {_r_ia_mv.get('tiempo',0):.1f}s")
 
                     # Análisis individuales
                     with st.expander("🔬 Ver análisis completos de cada IA"):
-                        for ia in _ias_nombres:
-                            res=resp_futbol.get(ia,{})
-                            ok_txt="✅" if res.get("ok") else "❌"
-                            with st.expander(f"{_ico_map.get(ia,'🤖')} {ia} {ok_txt} ({res.get('tiempo',0):.1f}s)"):
-                                st.write(res.get("respuesta","Sin respuesta"))
+                        for _ia_exp in ["ChatGPT","Claude","Gemini","Groq","Mistral"]:
+                            _r_exp = next((r for r in _respuestas_ias_mv if r.get("ia") == _ia_exp), {})
+                            _ok_exp = "✅" if _r_exp.get("ok") else "❌"
+                            with st.expander(f"{_ico_map_mv.get(_ia_exp,'🤖')} {_ia_exp} {_ok_exp} ({_r_exp.get('tiempo',0):.1f}s)"):
+                                st.write(_r_exp.get("respuesta","Sin respuesta"))
 
                     st.markdown("---")
 
-                    # ── 3 TICKETS DIFERENCIADOS
-                    st.markdown("### 🎟️ Tickets sugeridos")
-                    gemini_ctx=tickets_data.get("gemini_ctx","")
+                    # Selector de universos
+                    _n_universos_sel = st.selectbox(
+                        "¿Cuántos universos/parlays alternativos generar?",
+                        options=[1, 2, 3, 5, 7, 10, 15, 20],
+                        index=3,
+                        key="ftbl_n_universos_sel"
+                    )
+                    _universos_mv = filtrar_universos(
+                        st.session_state.get("universos_cache", []),
+                        _n_universos_sel,
+                        len(_partidos_keyed)
+                    )
 
-                    tcol1,tcol2,tcol3=st.columns(3)
+                    if not _universos_mv:
+                        st.warning("No se generaron universos válidos. Revisa los picks base.")
+                    else:
+                        if len(_universos_mv) < _n_universos_sel:
+                            st.info(
+                                f"Se generaron {len(_universos_mv)} universos únicos "
+                                f"de {_n_universos_sel} solicitados."
+                            )
 
-                    with tcol1:
-                        st.markdown("**🟢 Conservador ($1.000-$2.000)**")
-                        picks_c=tickets_data.get("conservador",[])
-                        nota_c=st.session_state.get("ftbl_nota_conserv","")
-                        if picks_c:
-                            txt_c=_ticket_txt("TICKET CONSERVADOR",picks_c,1000,liga_act,jor_act,nota=nota_c)
-                            if gemini_ctx: txt_c+=f"\n\n📍 Contexto Gemini:\n{gemini_ctx}"
-                            st.code(txt_c,language=None)
-                        else:
-                            st.info("⚠️ Sin partidos analizados aún. Genera el análisis primero.")
+                        # Tabla comparativa
+                        _datos_tabla_mv = []
+                        for _u_t in _universos_mv:
+                            _cuota_t_mv = _u_t.get("cuota_total", 0)
+                            _datos_tabla_mv.append({
+                                "U": f"U{_u_t['numero']}",
+                                "Tipo": _u_t.get("tipo", "?")[:30],
+                                "Cuota": f"{_cuota_t_mv:.2f}x",
+                                "Retorno $1.000": f"${round(_cuota_t_mv*1000):,}",
+                                "Riesgo": _u_t.get("etiqueta_riesgo", "Normal") or "Normal"
+                            })
+                        try:
+                            import pandas as pd
+                            st.dataframe(pd.DataFrame(_datos_tabla_mv), hide_index=True, use_container_width=True)
+                        except ImportError:
+                            for _row_mv in _datos_tabla_mv:
+                                st.write(f"**{_row_mv['U']}** | {_row_mv['Tipo']} | {_row_mv['Cuota']} | {_row_mv['Retorno $1.000']} | {_row_mv['Riesgo']}")
 
-                    with tcol2:
-                        st.markdown("**🟡 Balanceado ($1.000)**")
-                        picks_b=tickets_data.get("balanceado",[])
-                        if picks_b:
-                            txt_b=_ticket_txt("TICKET BALANCEADO",picks_b,1000,liga_act,jor_act)
-                            if gemini_ctx: txt_b+=f"\n\n📍 Contexto Gemini:\n{gemini_ctx}"
-                            st.code(txt_b,language=None)
-                        else:
-                            st.info("⚠️ Sin partidos analizados aún. Genera el análisis primero.")
+                        _timestamp_mv = datetime.now().strftime("%d/%m/%Y %H:%M")
 
-                    with tcol3:
-                        st.markdown("**🔴 Premium ($5.000) — solo ≥4 IAs**")
-                        picks_p=tickets_data.get("premium",[])
-                        if picks_p:
-                            txt_p=_ticket_txt("TICKET PREMIUM",picks_p,5000,liga_act,jor_act)
-                            if gemini_ctx: txt_p+=f"\n\n📍 Contexto Gemini:\n{gemini_ctx}"
-                            st.code(txt_p,language=None)
-                        else:
-                            st.caption("No hay picks con Alta confianza 🟢 esta vez.")
+                        def _calcular_var_u(u_actual, u_base):
+                            cambios = []
+                            _base_p = u_base.get("picks", [])
+                            for _icp, _pcp in enumerate(u_actual.get("picks", [])):
+                                if _icp < len(_base_p) and _pcp.get("pred") != _base_p[_icp].get("pred"):
+                                    cambios.append(
+                                        f"{_pcp.get('local','?')} vs {_pcp.get('visitante','?')}: "
+                                        f"{_base_p[_icp].get('equipo_resultado','?')} → "
+                                        f"{_pcp.get('equipo_resultado','?')}"
+                                    )
+                            return cambios
 
-                    st.caption("☝️ Selecciona el texto del ticket y copia (Ctrl+A / Cmd+A dentro del cuadro)")
+                        for _universo_mv in _universos_mv:
+                            _idx_u = _universo_mv.get("numero", 1)
+                            _et_u = _universo_mv.get("tipo", "?")
+                            _riesgo_u = _universo_mv.get("etiqueta_riesgo", "")
+                            _cuota_u = _universo_mv.get("cuota_total", 0)
+                            _retorno_u = round(_cuota_u * 1000)
+                            _var_u = _calcular_var_u(_universo_mv, _universos_mv[0]) if _idx_u > 1 else []
+
+                            st.markdown(f"### Universo {_idx_u} — {_et_u}")
+                            if _riesgo_u:
+                                st.warning(f"Nivel: {_riesgo_u}")
+                            _n_picks_u = len(_universo_mv.get("picks", []))
+                            if _n_picks_u >= 6:
+                                st.caption(f"Parlay de {_n_picks_u} selecciones = alta exposición. Monto bajo recomendado.")
+
+                            for _pick_u in _universo_mv.get("picks", []):
+                                _pref_u = "→ " if _pick_u.get("es_variacion") else "   "
+                                _inc_u = " ⚠️" if _pick_u.get("es_incierto") else ""
+                                st.write(
+                                    f"{_pref_u}{_pick_u.get('local','?')} vs "
+                                    f"{_pick_u.get('visitante','?')}: "
+                                    f"**{_pick_u.get('equipo_resultado','?')}**{_inc_u}"
+                                )
+
+                            if _var_u:
+                                st.caption("Cambios vs U1: " + " | ".join(_var_u))
+                            st.caption(f"Cuota: {_cuota_u:.2f}x | $1.000 → ${_retorno_u:,}")
+
+                            _lineas_u = [f"UNIVERSO {_idx_u} — {_et_u}", f"Generado: {_timestamp_mv}"]
+                            for _pt_u in _universo_mv.get("picks", []):
+                                _lineas_u.append(
+                                    f"{_pt_u.get('local','?')} vs {_pt_u.get('visitante','?')}: "
+                                    f"{_pt_u.get('equipo_resultado','?')}"
+                                )
+                            _lineas_u.append(f"Cuota: {_cuota_u:.2f}x | Retorno: ${_retorno_u:,}")
+                            st.code("\n".join(_lineas_u), language=None)
+                            st.divider()
 
                     st.markdown("---")
-
-                    # ── TOP N RUTAS — FIX 4 + FIX 6
-                    # FIX 4: Re-ordenar rutas por consenso IAs primero, luego EV, penalizar cuotas extremas
-                    def _score_ruta(r):
-                        cuota=r.get("cuota_total",1)
-                        ev=r.get("ev_total",0)
-                        n_picks=r.get("n_picks",1)
-                        # Penalizaciones
-                        if cuota>100000: return -9999
-                        if cuota>10000: return -999 + ev
-                        if cuota>1000: return -99 + ev
-                        if ev<-0.03: return ev - 0.5  # No puede ser Top3
-                        # Score: consenso + ev moderado
-                        return ev*0.5 + min(math.log(max(cuota,1.01)),4)*0.3 + n_picks*0.02
-                    rutas_150_sorted=sorted(rutas_150,key=_score_ruta,reverse=True)
-
-                    # FIX 6: Filtrar rutas ocultas
-                    rutas_ocultas=st.session_state.get("rutas_ocultas",[])
-                    rutas_visibles=[r for r in rutas_150_sorted if r.get("id") not in rutas_ocultas]
-                    top_show=rutas_visibles[:n_rutas]
-
-                    # Separar en secciones
-                    _sec_rec=[r for r in top_show if r.get("cuota_total",0)<=50 and r.get("ev_total",0)>=-0.03]
-                    _sec_bal=[r for r in top_show if r.get("cuota_total",0)<=1000 and r not in _sec_rec]
-                    _sec_exp=[r for r in top_show if r.get("cuota_total",0)>1000 and r.get("cuota_total",0)<=100000]
-                    _sec_lot=[r for r in top_show if r.get("cuota_total",0)>100000]
-
-                    if rutas_ocultas:
-                        if st.button("👁️ Mostrar rutas ocultas",key="mostrar_ocultas_top"):
-                            st.session_state["rutas_ocultas"]=[]
-                            st.rerun()
-                        st.caption(f"{len(rutas_ocultas)} ruta(s) oculta(s) | disponibles en Biblioteca")
-
-                    st.markdown(f"### 🏆 Top {len(top_show)} Rutas (de {len(rutas_150)} generadas)")
-
-                    def _render_rutas(lista_rutas,sec_label,expandir_primero=False):
-                        for idx_s,r in enumerate(lista_rutas):
-                            r_id=r.get("id",idx_s)
-                            if r["ev_total"]>0.05: color="🟢"
-                            elif r["ev_total"]>0: color="🟡"
-                            else: color="🔴"
-                            n_ias_acuerdo=0
-                            for ia in ias_ok_list:
-                                txt=resp_futbol.get(ia,{}).get("respuesta","").lower()
-                                if r["estrategia"].lower()[:6] in txt: n_ias_acuerdo+=1
-                            if r["ev_total"]<0:
-                                consenso_ruta="🔴 Bajo valor esperado"
-                            elif n_ias_acuerdo>=4: consenso_ruta="🟢 Alta confianza"
-                            elif n_ias_acuerdo>=3: consenso_ruta="🟡 Confianza media"
-                            else: consenso_ruta="🔴 Baja confianza"
-                            exp_label=(f"{color} {r['estrategia']} | {r['n_picks']} picks | "
-                                       f"Cuota: {r['cuota_total']:.2f} | EV: {r['ev_total']:.3f} | {consenso_ruta}")
-                            with st.expander(exp_label,expanded=(expandir_primero and idx_s==0)):
-                                # FIX 6: Botón ✕ eliminar ruta
-                                col_tbl,col_del=st.columns([10,1])
-                                with col_del:
-                                    _key_del=f"del_ruta_{sec_label}_{idx_s}_{r_id}"
-                                    if st.button("✕",key=_key_del,help="Ocultar esta ruta"):
-                                        st.session_state.setdefault("rutas_ocultas",[])
-                                        if r_id not in st.session_state["rutas_ocultas"]:
-                                            st.session_state["rutas_ocultas"].append(r_id)
-                                        st.toast("Ruta ocultada. Disponible en Biblioteca.")
-                                        st.rerun()
-                                with col_tbl:
-                                    picks_md="| Partido | Pred | Cuota | EV |\n|---|---|---|---|\n"
-                                    for pk in r["picks"]:
-                                        picks_md+=f"| {pk['local']} vs {pk['visitante']} | **{pk['pred']}** | {pk['cuota']:.2f} | {pk['ev']:+.3f} |\n"
-                                    st.markdown(picks_md)
-                                    st.caption(f"IAs en consenso: {n_ias_acuerdo}/{n_ias_ok} | {consenso_ruta}")
-                                ticket_lines=[
-                                    f"🎟️ PARLAY — {liga_act}",f"📅 {jor_act} | {r['estrategia']}",
-                                    f"🎯 Cuota: {r['cuota_total']:.2f}x | EV: {r['ev_total']:+.3f}","━"*24,
-                                ]
-                                for pk in r["picks"]:
-                                    pred_txt={"1":f"{pk['local']} gana","X":"Empate","2":f"{pk['visitante']} gana"}.get(pk["pred"],pk["pred"])
-                                    ticket_lines+=[f"⚽ {pk['local']} vs {pk['visitante']}",f"   → {pred_txt} ({pk['pred']}) @ {pk['cuota']:.2f}"]
-                                ticket_lines+=["━"*24,f"💰 $1.000 → ${1000*r['cuota_total']:,.0f}",
-                                               f"🧠 Football Lab | {consenso_ruta}","📱 jandrext-ia.streamlit.app"]
-                                st.code("\n".join(ticket_lines),language=None)
-
-                    if _sec_rec:
-                        st.markdown("#### 🎯 Recomendados")
-                        _render_rutas(_sec_rec,"rec",expandir_primero=True)
-                    if _sec_bal:
-                        st.markdown("#### ⚖️ Balanceados")
-                        _render_rutas(_sec_bal,"bal")
-                    if _sec_exp:
-                        st.markdown("#### 🎲 Experimentales _(cuota > 1.000x)_")
-                        _render_rutas(_sec_exp,"exp")
-                    if _sec_lot:
-                        st.markdown("#### 🎰 Entretenimiento / Lotería _(cuota > 100.000x)_")
-                        _render_rutas(_sec_lot,"lot")
-
-        # ────────────────────────────────────────────────────────────────
-        # TAB 3 — REGISTRO / VOUCHER
-        # ────────────────────────────────────────────────────────────────
+                    if st.button("🔄 Forzar re-análisis IA", key="ftbl_reanalizar_mv"):
+                        for _ks2 in ["bloque_key_cache","diagnostico_cache","picks_base_cache","universos_cache","resp_ias_cache"]:
+                            st.session_state.pop(_ks2, None)
+                        st.rerun()
         with tab_f3:
             st.markdown("### 📒 Registro de Apuesta / Voucher")
 
