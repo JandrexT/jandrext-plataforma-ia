@@ -2745,29 +2745,79 @@ CREATE POLICY "own_bets_update" ON football_bets FOR UPDATE USING (auth.uid()=us
                         modo_b="🔬 SIM" if bet.get("simulado") else "💰 REAL"
                         _estado=bet.get("status","pending")
                         _icon={"placed":"⏳","won":"✅","lost":"❌","simulated":"🔬"}.get(_estado,"⏳")
+                        _bid=bet.get("id","")
                         with st.expander(
                             f"{_icon} #{bet.get('ticket_id','')} | {modo_b} | "
                             f"{bet.get('tipo_ticket','').title()} | "
                             f"${bet.get('stake',0):,.0f} | {bet.get('casa_apuestas','')}",
                             expanded=False
                         ):
+                            # ── Métricas principales
                             c1,c2,c3=st.columns(3)
                             c1.metric("Tipo",bet.get("tipo_ticket","").title())
                             c2.metric("Monto",f"${bet.get('stake',0):,.0f}")
                             c3.metric("Estado",_estado)
-                            if bet.get("torneo"): st.caption(f"🏆 {bet.get('torneo','')} | {bet.get('casa_apuestas','')}")
-                            if bet.get("voucher_text"): st.text(f"Comprobante: {bet.get('voucher_text','')[:200]}")
-                            # Cambiar estado (ganada/perdida)
-                            _nuevo_estado=st.selectbox(
-                                "Actualizar resultado",
-                                ["placed","simulated","won","lost"],
-                                index=["placed","simulated","won","lost"].index(_estado) if _estado in ["placed","simulated","won","lost"] else 0,
-                                key=f"estado_bet_{bet.get('id','')}"
-                            )
-                            if st.button("💾 Guardar resultado",key=f"save_bet_{bet.get('id','')}"):
-                                supa("football_bets","PATCH",{"status":_nuevo_estado},filtro=f"?id=eq.{bet.get('id','')}")
-                                st.success("✅ Estado actualizado")
-                                st.rerun()
+                            if bet.get("torneo"):
+                                st.caption(f"🏆 {bet.get('torneo','')} | {bet.get('casa_apuestas','')}")
+
+                            # ── Picks del ticket (desde ai_ticket_json)
+                            _aj=bet.get("ai_ticket_json","")
+                            if _aj:
+                                try:
+                                    _picks=json.loads(_aj) if isinstance(_aj,str) else _aj
+                                    if isinstance(_picks,list) and _picks:
+                                        st.markdown("**🎯 Picks del ticket:**")
+                                        _picks_md="| Partido | Pick | Cuota |\n|---|---|---|\n"
+                                        for pk in _picks:
+                                            if isinstance(pk,(list,tuple)) and len(pk)>=2:
+                                                _k,_v=pk[0],pk[1]
+                                                if "|" in str(_k):
+                                                    _loc,_vis=str(_k).split("|",1)
+                                                    _picks_md+=f"| {_loc} vs {_vis} | {_v.get('pred_txt',_v.get('pred',''))} | {_v.get('cuota',0):.2f} |\n"
+                                            elif isinstance(pk,dict):
+                                                _picks_md+=f"| {pk.get('local','')} vs {pk.get('visitante','')} | {pk.get('pred_txt',pk.get('pred',''))} | {pk.get('cuota',0):.2f} |\n"
+                                        st.markdown(_picks_md)
+                                    elif isinstance(_picks,dict) and _picks:
+                                        st.markdown("**🎯 Picks del ticket:**")
+                                        for _kk,_vv in _picks.items():
+                                            if "|" in str(_kk):
+                                                _loc,_vis=str(_kk).split("|",1)
+                                                st.markdown(f"• {_loc} vs {_vis} → **{_vv.get('pred_txt',_vv.get('pred',''))}** @ {_vv.get('cuota',0):.2f}")
+                                except: pass
+
+                            # ── Comprobante
+                            if bet.get("voucher_text"):
+                                with st.expander("📋 Ver comprobante"):
+                                    st.text(bet.get("voucher_text","")[:500])
+
+                            st.markdown("---")
+                            # ── Actualizar resultado + Eliminar
+                            _col_est,_col_del=st.columns([3,1])
+                            with _col_est:
+                                _nuevo_estado=st.selectbox(
+                                    "Resultado",
+                                    ["placed","simulated","won","lost"],
+                                    index=["placed","simulated","won","lost"].index(_estado) if _estado in ["placed","simulated","won","lost"] else 0,
+                                    key=f"estado_bet_{_bid}"
+                                )
+                                if st.button("💾 Guardar resultado",key=f"save_bet_{_bid}"):
+                                    supa("football_bets","PATCH",{"status":_nuevo_estado},filtro=f"?id=eq.{_bid}")
+                                    st.success("✅ Resultado actualizado")
+                                    st.rerun()
+                            with _col_del:
+                                st.markdown("&nbsp;")
+                                if st.button("🗑️ Eliminar",key=f"del_bet_{_bid}",type="secondary"):
+                                    st.session_state[f"confirm_del_{_bid}"]=True
+                                if st.session_state.get(f"confirm_del_{_bid}"):
+                                    st.warning("¿Seguro que quieres eliminar este registro?")
+                                    c_si,c_no=st.columns(2)
+                                    if c_si.button("✅ Sí, eliminar",key=f"si_del_{_bid}"):
+                                        supa("football_bets","DELETE",filtro=f"?id=eq.{_bid}")
+                                        st.session_state.pop(f"confirm_del_{_bid}",None)
+                                        st.rerun()
+                                    if c_no.button("❌ Cancelar",key=f"no_del_{_bid}"):
+                                        st.session_state.pop(f"confirm_del_{_bid}",None)
+                                        st.rerun()
 
         # ────────────────────────────────────────────────────────────────
         # TAB 4 — RESULTADOS
