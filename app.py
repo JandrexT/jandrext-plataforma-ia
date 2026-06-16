@@ -2637,54 +2637,80 @@ Empate 4.00
             tor_r=st.session_state.get("ftbl_torneo_activo","")
             _fv=st.session_state.get("ftbl_reg_v",0)
 
-            # ── Parser de comprobante
+            # ── Parser de comprobante (Formato A: Simple/Parlay, Formato B: Derecha/Accumulator)
             def _parsear_comprobante(txt):
                 import re
                 apuestas=[]
-                # Detectar casa
+                _est_map={"ganada":"won","perdida":"lost","abierta":"placed","pendiente":"placed","anulada":"cancelled","en curso":"placed"}
                 _casa="Otra"
-                if re.search(r"wplay",txt,re.I): _casa="Wplay"
-                elif re.search(r"codere",txt,re.I): _casa="Codere"
-                elif re.search(r"betplay",txt,re.I): _casa="Betplay"
-                # Mapeo estado
-                _est_map={"ganada":"won","perdida":"lost","pendiente":"placed","anulada":"cancelled","en curso":"placed"}
-                # Dividir por bloques de recibo
-                bloques=re.split(r"(?=(?:Simple\(s\)|Parlay\s*\(\d+\))\s*-)",txt,flags=re.I)
-                for blq in bloques:
-                    blq=blq.strip()
-                    if not blq: continue
-                    # Cabecera
-                    cab=re.match(r"(Simple\(s\)|Parlay\s*\((\d+)\))\s*-\s*(\w[\w\s]*?)\s+Recibo No\.:\s*(\d+)",blq,re.I)
-                    if not cab: continue
-                    tipo_raw=cab.group(1).lower()
-                    estado_raw=cab.group(3).strip().lower()
-                    recibo=cab.group(4)
-                    es_parlay="parlay" in tipo_raw
-                    estado=_est_map.get(estado_raw,"placed")
-                    # Monto
-                    m_monto=re.search(r"Monto de Apuesta:\s*\$([\d,]+)",blq,re.I)
-                    monto=int(m_monto.group(1).replace(",","")) if m_monto else 1000
-                    # Ganancia
-                    m_gan=re.search(r"Ganancia:\s*\$([\d,]+)",blq,re.I)
-                    ganancia=int(m_gan.group(1).replace(",","")) if m_gan else 0
-                    # Cuota total parlay
-                    m_cuota=re.search(r"cuotas?:\s*([\d.]+)",blq,re.I)
-                    cuota_total=float(m_cuota.group(1)) if m_cuota else 0.0
-                    # Picks: partido en una linea, pick en la siguiente
-                    picks=[]
-                    for pm in re.finditer(r"(.+?)\s+v\s+(.+?)\n(.+?)\s+@\s+([\d.]+)",blq):
-                        local=pm.group(1).strip()
-                        visitante=pm.group(2).strip()
-                        pick_txt=pm.group(3).strip()
-                        cuota_pk=float(pm.group(4))
-                        if not cuota_total and not es_parlay: cuota_total=cuota_pk
-                        picks.append({"local":local,"visitante":visitante,"pred_txt":pick_txt,"cuota":cuota_pk})
-                    if not picks: continue
-                    apuestas.append({
-                        "recibo":recibo,"tipo":"parlay" if es_parlay else "simple",
-                        "estado":estado,"monto":monto,"ganancia":ganancia,
-                        "cuota_total":cuota_total,"picks":picks,"casa":_casa
-                    })
+                for _cn,_cp in [("Wplay","wplay"),("Codere","codere"),("Betplay","betplay")]:
+                    if re.search(_cp,txt,re.I): _casa=_cn; break
+                # ── FORMATO A: "Recibo No.:" → Simple(s)/Parlay clásico
+                if "Recibo No.:" in txt:
+                    for blq in re.split(r"(?=(?:Simple\(s\)|Parlay\s*\(\d+\))\s*-)",txt,flags=re.I):
+                        blq=blq.strip()
+                        if not blq: continue
+                        cab=re.match(r"(Simple\(s\)|Parlay\s*\((\d+)\))\s*-\s*(\w[\w\s]*?)\s+Recibo No\.:\s*(\d+)",blq,re.I)
+                        if not cab: continue
+                        tipo_raw=cab.group(1).lower()
+                        estado=_est_map.get(cab.group(3).strip().lower(),"placed")
+                        recibo=cab.group(4)
+                        es_parlay="parlay" in tipo_raw
+                        m_monto=re.search(r"Monto de Apuesta:\s*\$([\d,]+)",blq,re.I)
+                        monto=int(m_monto.group(1).replace(",","")) if m_monto else 1000
+                        m_gan=re.search(r"Ganancia:\s*\$([\d,]+)",blq,re.I)
+                        ganancia=int(m_gan.group(1).replace(",","")) if m_gan else 0
+                        m_cuota=re.search(r"cuotas?:\s*([\d.]+)",blq,re.I)
+                        cuota_total=float(m_cuota.group(1)) if m_cuota else 0.0
+                        picks=[]
+                        for pm in re.finditer(r"(.+?)\s+v\s+(.+?)\n(.+?)\s+@\s+([\d.]+)",blq):
+                            cuota_pk=float(pm.group(4))
+                            if not cuota_total and not es_parlay: cuota_total=cuota_pk
+                            picks.append({"local":pm.group(1).strip(),"visitante":pm.group(2).strip(),"pred_txt":pm.group(3).strip(),"cuota":cuota_pk})
+                        if picks:
+                            apuestas.append({"recibo":recibo,"tipo":"parlay" if es_parlay else "simple","estado":estado,"monto":monto,"ganancia":ganancia,"cuota_total":cuota_total,"picks":picks,"casa":_casa})
+                # ── FORMATO B: "Derecha" / "Accumulator" (Wplay/Codere historial)
+                elif re.search(r'\d{7,}\s*\t\s*(?:Derecha|Accumulator)',txt,re.I):
+                    secs=re.split(r'(?m)(?=^\d{7,}\s*\t\s*(?:Derecha|Accumulator))',txt,flags=re.I)
+                    for blq in secs:
+                        blq=blq.strip()
+                        if not blq: continue
+                        head=re.match(r'(\d{7,})\s*\t\s*(Derecha|Accumulator\s*\(\d+\))',blq,re.I)
+                        if not head: continue
+                        recibo=head.group(1)
+                        tipo_raw=head.group(2).lower()
+                        es_acc="accumulator" in tipo_raw
+                        est_m=re.search(r'[\d.]+\s*\t-\s*\t-\s*\t(\w+)',blq)
+                        estado=_est_map.get((est_m.group(1).lower() if est_m else "abierta"),"placed")
+                        monto_m=re.search(r'\$([\d,]+)\n',blq)
+                        monto=int(monto_m.group(1).replace(",","")) if monto_m else 1000
+                        cuota_m=re.search(r'\n([\d.]+)\s*\t-\s*\t-',blq)
+                        cuota_total=float(cuota_m.group(1)) if cuota_m else 0.0
+                        gan_m=re.search(r'\$([\d,]+)\n[^\n]*\nRECUPERAR',blq)
+                        ganancia=int(gan_m.group(1).replace(",","")) if gan_m else 0
+                        picks=[]
+                        lines=blq.split('\n')
+                        for i,ln in enumerate(lines):
+                            ev_m=re.match(r'\d{1,2} \w+ \d{2}:\d{2}\s*\t([^\t]+)\t',ln)
+                            if not ev_m: continue
+                            partido_str=ev_m.group(1).strip()
+                            if " v " not in partido_str: continue
+                            local,visitante=partido_str.split(" v ",1)
+                            j=i+1
+                            while j<len(lines) and not lines[j].strip(): j+=1
+                            sel=lines[j].strip() if j<len(lines) else ""
+                            cuota_pk=0.0
+                            if es_acc and j+1<len(lines):
+                                cl=lines[j+1].strip().split('\t')[0]
+                                try:
+                                    v=float(cl.replace(',','.'))
+                                    if 1.0<=v<=100000.0: cuota_pk=v
+                                except: pass
+                            _skip={"Resultado Tiempo Completo","Resultado","Descripcion","Apuesta","Seleccion","cuotas"}
+                            if sel and sel not in _skip and not sel.startswith("$") and not re.match(r'^[\d.]+\s*\t',sel):
+                                picks.append({"local":local.strip(),"visitante":visitante.strip(),"pred_txt":sel,"cuota":cuota_pk or cuota_total})
+                        if picks:
+                            apuestas.append({"recibo":recibo,"tipo":"accumulator" if es_acc else "simple","estado":estado,"monto":monto,"ganancia":ganancia,"cuota_total":cuota_total,"picks":picks,"casa":_casa})
                 return apuestas
 
             # ── Área de pegado
@@ -2702,8 +2728,8 @@ Empate 4.00
 
             if _apuestas_det:
                 _n_s=sum(1 for a in _apuestas_det if a["tipo"]=="simple")
-                _n_p=sum(1 for a in _apuestas_det if a["tipo"]=="parlay")
-                st.success(f"✅ Detectadas **{len(_apuestas_det)} apuesta(s)**: {_n_s} simple(s), {_n_p} parlay(s)")
+                _n_p=sum(1 for a in _apuestas_det if a["tipo"] in ("parlay","accumulator"))
+                st.success(f"✅ Detectadas **{len(_apuestas_det)} apuesta(s)**: {_n_s} simple(s), {_n_p} combinada(s)")
                 # Preview tabla
                 _prev_rows=[]
                 for a in _apuestas_det:
@@ -2859,37 +2885,4 @@ CREATE POLICY "own_bets_update" ON football_bets FOR UPDATE USING (auth.uid()=us
                                 if st.button("💾 Guardar resultado",key=f"save_bet_{_bid}"):
                                     supa("football_bets","PATCH",{"status":_nuevo_estado},filtro=f"?id=eq.{_bid}")
                                     st.success("✅ Resultado actualizado")
-                                    st.rerun()
-                            with _col_del:
-                                st.markdown("&nbsp;")
-                                if st.button("🗑️ Eliminar",key=f"del_bet_{_bid}",type="secondary"):
-                                    st.session_state[f"confirm_del_{_bid}"]=True
-                                if st.session_state.get(f"confirm_del_{_bid}"):
-                                    st.warning("¿Seguro que quieres eliminar este registro?")
-                                    c_si,c_no=st.columns(2)
-                                    if c_si.button("✅ Sí, eliminar",key=f"si_del_{_bid}"):
-                                        supa("football_bets","DELETE",filtro=f"?id=eq.{_bid}")
-                                        st.session_state.pop(f"confirm_del_{_bid}",None)
-                                        st.rerun()
-                                    if c_no.button("❌ Cancelar",key=f"no_del_{_bid}"):
-                                        st.session_state.pop(f"confirm_del_{_bid}",None)
-                                        st.rerun()
-
-        # ────────────────────────────────────────────────────────────────
-        # TAB 4 — RESULTADOS
-        # ────────────────────────────────────────────────────────────────
-        with tab_f4:
-            st.markdown("### 📈 Resultados y Accuracy")
-            st.info("📅 Próximamente: carga de resultados reales y cálculo de ROI por estrategia.")
-
-        # ────────────────────────────────────────────────────────────────
-        # TAB 5 — BIBLIOTECA
-        # ────────────────────────────────────────────────────────────────
-        with tab_f5:
-            st.markdown("### 📚 Biblioteca de Bloques")
-            bloques_bib=supa("futbol_bloques",filtro="?order=creado_en.desc") or []
-            if not isinstance(bloques_bib,list): bloques_bib=[]
-            if not bloques_bib:
-                st.info("Aún no hay bloques guardados.")
-            for b in [x for x in bloques_bib[:20] if isinstance(x,dict)]:
-                st.markdown(f"⚽ **{b.get('liga','')} — {b.get('jornada','')} | {b.get('n_partidos',0)} partidos")
+                      
