@@ -2625,8 +2625,8 @@ Empate 4.00
                 horizontal=True,
                 key="ftbl_modo_radio_reg"
             )
+            # NO escribir a ftbl_modo_sim — es key de st.toggle en TAB 1
             modo_sim_val=_modo_opciones[_modo_sel]
-            st.session_state["ftbl_modo_sim"]=modo_sim_val
             if not modo_sim_val:
                 st.warning("⚠️ **Modo REAL activado.** Esta apuesta se registrará como real y afectará tu bankroll.")
 
