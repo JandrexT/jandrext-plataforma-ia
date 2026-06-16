@@ -2638,14 +2638,58 @@ Empate 4.00
             if not tickets_data_r:
                 st.info("⬅️ Primero genera el análisis en 🎯 Veredicto IA / Tickets")
             else:
-                tipo_ticket=st.selectbox("Tipo de ticket a registrar",
-                    ["Conservador","Balanceado","Premium","Personalizado"])
-                casa_apuestas=st.selectbox("Casa de apuestas",["Wplay","Codere","Betplay","Otra"])
-                stake=st.number_input("Monto apostado ($)",min_value=0,value=1000,step=500)
-                voucher_txt=st.text_area("📋 Código / comprobante de la apuesta (opcional)",height=100,
-                    placeholder="Pega el número de ticket o código de confirmación de Wplay/Codere...")
+                # Versión del formulario — se incrementa al registrar para limpiar los campos
+                _fv=st.session_state.get("ftbl_reg_v",0)
 
-                if st.button("💾 Registrar apuesta",type="primary",use_container_width=True):
+                tipo_ticket=st.selectbox("Tipo de ticket",
+                    ["Conservador","Balanceado","Premium","Personalizado"],
+                    key=f"tt_{_fv}")
+                casa_apuestas=st.selectbox("Casa de apuestas",
+                    ["Wplay","Codere","Betplay","Otra"],
+                    key=f"ca_{_fv}")
+
+                # Comprobante primero — el monto se auto-extrae de ahí
+                voucher_txt=st.text_area(
+                    "📋 Pega aquí el comprobante de Wplay",
+                    height=120,
+                    placeholder="Pega el comprobante completo — el monto se detecta automáticamente...",
+                    key=f"vt_{_fv}"
+                )
+
+                # Auto-parsear monto desde el comprobante
+                def _parsear_monto(txt):
+                    import re
+                    # Patrones comunes en comprobantes Wplay/Codere
+                    patrones=[
+                        r'\$\s*([\d][.\d]*)',          # $15.000 o $15,000
+                        r'(?:valor|monto|apuesta|stake)[:\s]*([\d][.\d,]*)',
+                        r'([\d]{3,}(?:[.,]\d{3})*)\s*(?:cop|pesos|COP)',
+                        r'(?:pagaste|pagado|cobrado)[:\s]*([\d][.\d,]*)',
+                    ]
+                    for pat in patrones:
+                        m=re.search(pat,txt,re.IGNORECASE)
+                        if m:
+                            raw=m.group(1).replace('.','').replace(',','')
+                            try:
+                                v=int(raw)
+                                if 500<=v<=50_000_000: return v
+                            except: pass
+                    return None
+
+                _monto_auto=_parsear_monto(voucher_txt) if voucher_txt.strip() else None
+                if _monto_auto:
+                    st.success(f"💡 Monto detectado automáticamente: **${_monto_auto:,.0f}**")
+                    _default_stake=_monto_auto
+                else:
+                    _default_stake=st.session_state.get(f"stake_default_{_fv}",1000)
+
+                stake=st.number_input(
+                    "Monto apostado ($)" + (" — ajusta si es incorrecto" if _monto_auto else ""),
+                    min_value=0, value=_default_stake, step=500,
+                    key=f"sk_{_fv}"
+                )
+
+                if st.button("💾 Registrar apuesta",type="primary",use_container_width=True,key=f"reg_{_fv}"):
                     ticket_id=str(uuid.uuid4())[:8].upper()
                     n_ias_r=len(st.session_state.get("ftbl_ias_ok",[]))
                     _res_post=supa("football_bets","POST",{
@@ -2662,6 +2706,8 @@ Empate 4.00
                         "ai_ticket_json":json.dumps(tickets_data_r.get(tipo_ticket.lower(),{}),ensure_ascii=False)[:2000]
                     })
                     if _res_post is not None and not (isinstance(_res_post,dict) and _res_post.get("error")):
+                        # Limpiar formulario incrementando la versión
+                        st.session_state["ftbl_reg_v"]=_fv+1
                         if modo_sim_val:
                             st.success(f"✅ Ticket #{ticket_id} guardado en modo SIMULADO.")
                         else:
