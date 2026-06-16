@@ -51,6 +51,7 @@ SUPA_URL = get_secret("SUPABASE_URL")
 SUPA_KEY = get_secret("SUPABASE_ANON_KEY")
 
 def supa(tabla, metodo="GET", data=None, filtro=""):
+    if not SUPA_URL or not SUPA_KEY: return {"error":"Supabase no configurado"}
     url = f"{SUPA_URL}/rest/v1/{tabla}{filtro}"
     h = {"apikey":SUPA_KEY,"Authorization":f"Bearer {SUPA_KEY}",
          "Content-Type":"application/json","Prefer":"return=representation"}
@@ -59,8 +60,11 @@ def supa(tabla, metodo="GET", data=None, filtro=""):
         elif metodo=="POST":  r=req.post(url,headers=h,json=data,timeout=10)
         elif metodo=="PATCH": r=req.patch(url,headers=h,json=data,timeout=10)
         elif metodo=="DELETE":r=req.delete(url,headers=h,timeout=10)
+        else: return {"error":f"Método no soportado: {metodo}"}
+        if r.status_code>=400:
+            return {"error":f"HTTP {r.status_code}","detail":r.text[:300]}
         return r.json() if r.text else []
-    except: return []
+    except Exception as e: return {"error":str(e)[:200]}
 
 def hash_pwd(pwd):
     try:
@@ -2635,86 +2639,74 @@ Empate 4.00
             jor_r=st.session_state.get("ftbl_jor_activa","")
             tor_r=st.session_state.get("ftbl_torneo_activo","")
 
+            # ── Formulario de registro (siempre visible)
+            _fv=st.session_state.get("ftbl_reg_v",0)
+            tipo_ticket=st.selectbox("Tipo de ticket",
+                ["Conservador","Balanceado","Premium","Personalizado"],key=f"tt_{_fv}")
+            casa_apuestas=st.selectbox("Casa de apuestas",
+                ["Wplay","Codere","Betplay","Otra"],key=f"ca_{_fv}")
+
+            voucher_txt=st.text_area(
+                f"📋 Pega aquí el comprobante de {casa_apuestas}",
+                height=120,
+                placeholder="Pega el comprobante completo — el monto se detecta automáticamente...",
+                key=f"vt_{_fv}"
+            )
+
+            def _parsear_monto(txt):
+                import re
+                patrones=[
+                    r'\$\s*([\d][.\d]*)',
+                    r'(?:valor|monto|apuesta|stake)[:\s]*([\d][.\d,]*)',
+                    r'([\d]{3,}(?:[.,]\d{3})*)\s*(?:cop|pesos|COP)',
+                    r'(?:pagaste|pagado|cobrado)[:\s]*([\d][.\d,]*)',
+                ]
+                for pat in patrones:
+                    m=re.search(pat,txt,re.IGNORECASE)
+                    if m:
+                        raw=m.group(1).replace('.','').replace(',','')
+                        try:
+                            v=int(raw)
+                            if 500<=v<=50_000_000: return v
+                        except: pass
+                return None
+
+            _monto_auto=_parsear_monto(voucher_txt) if voucher_txt.strip() else None
+            if _monto_auto:
+                st.success(f"💡 Monto detectado: **${_monto_auto:,.0f}**")
+            stake=st.number_input(
+                "Monto apostado ($)"+(" ← ajusta si es incorrecto" if _monto_auto else ""),
+                min_value=0,value=_monto_auto or 1000,step=500,key=f"sk_{_fv}"
+            )
+
             if not tickets_data_r:
-                st.info("⬅️ Primero genera el análisis en 🎯 Veredicto IA / Tickets")
-            else:
-                # Versión del formulario — se incrementa al registrar para limpiar los campos
-                _fv=st.session_state.get("ftbl_reg_v",0)
+                st.caption("ℹ️ Sin análisis previo — el ticket se registrará sin picks de IA")
 
-                tipo_ticket=st.selectbox("Tipo de ticket",
-                    ["Conservador","Balanceado","Premium","Personalizado"],
-                    key=f"tt_{_fv}")
-                casa_apuestas=st.selectbox("Casa de apuestas",
-                    ["Wplay","Codere","Betplay","Otra"],
-                    key=f"ca_{_fv}")
-
-                # Comprobante primero — el monto se auto-extrae de ahí
-                voucher_txt=st.text_area(
-                    "📋 Pega aquí el comprobante de Wplay",
-                    height=120,
-                    placeholder="Pega el comprobante completo — el monto se detecta automáticamente...",
-                    key=f"vt_{_fv}"
-                )
-
-                # Auto-parsear monto desde el comprobante
-                def _parsear_monto(txt):
-                    import re
-                    # Patrones comunes en comprobantes Wplay/Codere
-                    patrones=[
-                        r'\$\s*([\d][.\d]*)',          # $15.000 o $15,000
-                        r'(?:valor|monto|apuesta|stake)[:\s]*([\d][.\d,]*)',
-                        r'([\d]{3,}(?:[.,]\d{3})*)\s*(?:cop|pesos|COP)',
-                        r'(?:pagaste|pagado|cobrado)[:\s]*([\d][.\d,]*)',
-                    ]
-                    for pat in patrones:
-                        m=re.search(pat,txt,re.IGNORECASE)
-                        if m:
-                            raw=m.group(1).replace('.','').replace(',','')
-                            try:
-                                v=int(raw)
-                                if 500<=v<=50_000_000: return v
-                            except: pass
-                    return None
-
-                _monto_auto=_parsear_monto(voucher_txt) if voucher_txt.strip() else None
-                if _monto_auto:
-                    st.success(f"💡 Monto detectado automáticamente: **${_monto_auto:,.0f}**")
-                    _default_stake=_monto_auto
+            if st.button("💾 Registrar apuesta",type="primary",use_container_width=True,key=f"reg_{_fv}"):
+                ticket_id=str(uuid.uuid4())[:8].upper()
+                n_ias_r=len(st.session_state.get("ftbl_ias_ok",[]))
+                _res_post=supa("football_bets","POST",{
+                    "user_id":u["id"],
+                    "ticket_id":ticket_id,
+                    "casa_apuestas":casa_apuestas,
+                    "torneo":tor_r,
+                    "tipo_ticket":tipo_ticket.lower(),
+                    "stake":stake,
+                    "status":"simulated" if modo_sim_val else "placed",
+                    "voucher_text":voucher_txt,
+                    "consenso_ias":n_ias_r,
+                    "simulado":modo_sim_val,
+                    "ai_ticket_json":json.dumps((tickets_data_r or {}).get(tipo_ticket.lower(),{}),ensure_ascii=False)[:2000]
+                })
+                if isinstance(_res_post,dict) and _res_post.get("error"):
+                    st.error(f"❌ Supabase: {_res_post.get('error')} — {_res_post.get('detail','')}")
+                    st.warning("💡 Ejecuta este SQL en Supabase para permitir acceso sin Supabase Auth:")
+                    st.code("ALTER TABLE football_bets DISABLE ROW LEVEL SECURITY;", language="sql")
                 else:
-                    _default_stake=st.session_state.get(f"stake_default_{_fv}",1000)
-
-                stake=st.number_input(
-                    "Monto apostado ($)" + (" — ajusta si es incorrecto" if _monto_auto else ""),
-                    min_value=0, value=_default_stake, step=500,
-                    key=f"sk_{_fv}"
-                )
-
-                if st.button("💾 Registrar apuesta",type="primary",use_container_width=True,key=f"reg_{_fv}"):
-                    ticket_id=str(uuid.uuid4())[:8].upper()
-                    n_ias_r=len(st.session_state.get("ftbl_ias_ok",[]))
-                    _res_post=supa("football_bets","POST",{
-                        "user_id":u["id"],
-                        "ticket_id":ticket_id,
-                        "casa_apuestas":casa_apuestas,
-                        "torneo":tor_r,
-                        "tipo_ticket":tipo_ticket.lower(),
-                        "stake":stake,
-                        "status":"simulated" if modo_sim_val else "placed",
-                        "voucher_text":voucher_txt,
-                        "consenso_ias":n_ias_r,
-                        "simulado":modo_sim_val,
-                        "ai_ticket_json":json.dumps(tickets_data_r.get(tipo_ticket.lower(),{}),ensure_ascii=False)[:2000]
-                    })
-                    if _res_post is not None and not (isinstance(_res_post,dict) and _res_post.get("error")):
-                        # Limpiar formulario incrementando la versión
-                        st.session_state["ftbl_reg_v"]=_fv+1
-                        if modo_sim_val:
-                            st.success(f"✅ Ticket #{ticket_id} guardado en modo SIMULADO.")
-                        else:
-                            st.success(f"✅ Ticket #{ticket_id} guardado como apuesta REAL. Revisa tu saldo.")
-                        st.rerun()
-                    else:
-                        st.error(f"❌ Error al guardar en Supabase: {_res_post}. Verifica que la tabla football_bets existe.")
+                    st.session_state["ftbl_reg_v"]=_fv+1
+                    _label="SIMULADO" if modo_sim_val else "REAL"
+                    st.success(f"✅ Ticket #{ticket_id} registrado ({_label})")
+                    st.rerun()
 
             # ── Lista de apuestas registradas
             st.markdown("---")
