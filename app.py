@@ -2340,6 +2340,10 @@ Empate 4.00
                             "- Motivo deportivo: trayectoria, H2H, plantilla, necesidad de puntos, jugadores clave, lesiones, sanciones, contexto del torneo\n"
                             "- Las cuotas SOLO aparecen al final en seccion Referencia economica\n"
                             "- Picks escritos como: Francia gana (1), Empate (X), Senegal gana (2). NO como Francia 1 @1.52\n\n"
+                            "VEREDICTO OBLIGATORIO POR PARTIDO:\n"
+                            "Debes entregar veredicto para CADA partido recibido. Ningun partido puede quedar sin prediccion.\n"
+                            "Para cada partido elige 1, X o 2 basado en: trayectoria, forma actual, H2H, necesidad de puntos, calidad de plantilla, jugadores disponibles, lesiones, sanciones, contexto del torneo y riesgo deportivo.\n"
+                            "No uses la cuota para decidir si un pick es recomendado. La cuota solo aparece como referencia economica al final.\n\n"
                             f"TORNEO: {torneo_act} | {n_ias_ok}/5 IAs analizaron {top_n} rutas.\n\n"
                             f"ANÁLISIS DE LAS IAs:\n{resp_texts}\n\n"
                             "ESTRUCTURA OBLIGATORIA:\n\n"
@@ -2478,19 +2482,91 @@ Empate 4.00
 
                     st.markdown("---")
 
-                    # ── VEREDICTO POR PARTIDO
-                    st.markdown("### 🎯 Veredicto por partido")
+                    # ── VEREDICTO POR PARTIDO (CAMBIO 1: formato deportivo, cuota al final)
+                    st.markdown(f"### 🎯 Veredicto por partido ({len(veredicto_partidos)} partidos)")
                     for k,v in veredicto_partidos.items():
                         local,visitante=k.split("|")
+                        _conf_txt=v["conf"].replace("🟢 ","").replace("🟡 ","").replace("🔴 ","")
+                        _motivo_map={
+                            "Ticket conservador corto":"superioridad deportiva clara, alto consenso entre IAs",
+                            "Ticket balanceado":"ventaja táctica moderada, respaldo de la mayoría de IAs",
+                            "Ticket de valor":"potencial deportivo identificado por las IAs",
+                            "Evitar":"partido equilibrado o con alta incertidumbre deportiva"
+                        }
+                        _motivo=_motivo_map.get(v["apta_para"],"análisis basado en forma y contexto del torneo")
                         with st.container():
                             st.markdown(
-                                f"**{local} vs {visitante}** @{v['cuota']:.2f}\n\n"
-                                f"→ **Pick:** {v['pred_txt']} | "
-                                f"**Consenso:** {v['n_ias']}/{n_ias_ok} IAs | "
-                                f"**{v['conf']}** | **Riesgo:** {v['riesgo']}\n\n"
-                                f"→ *Apta para: {v['apta_para']}*"
+                                f"**{local} vs {visitante}**\n\n"
+                                f"→ **Predicción deportiva:** {v['pred_txt']}\n\n"
+                                f"→ **Confianza deportiva:** {_conf_txt}\n\n"
+                                f"→ **Riesgo:** {v['riesgo']}\n\n"
+                                f"→ **Consenso:** {v['n_ias']}/{n_ias_ok} IAs\n\n"
+                                f"→ **Motivo:** {_motivo}\n\n"
+                                f"→ **Apta para:** {v['apta_para']}\n\n"
+                                f"→ *Cuota referencia: {v['cuota']:.2f}*"
                             )
                             st.markdown("---")
+                    # ── CAMBIO 2: SELECTOR DE OPORTUNIDADES
+                    _n_partidos_total=len(veredicto_partidos)
+                    if _n_partidos_total>0:
+                        st.markdown("### 🎯 Selector de oportunidades")
+                        _opciones_n=[3,4,5,6,7,8,10,"Personalizado"]
+                        _n_sel=st.selectbox(
+                            "¿Cuántas mejores oportunidades deseas sintetizar?",
+                            options=_opciones_n,
+                            index=2,
+                            key="ftbl_n_picks_sel"
+                        )
+                        if _n_sel=="Personalizado":
+                            _n_sel=st.number_input(
+                                "Ingresa la cantidad",
+                                min_value=2,
+                                max_value=_n_partidos_total,
+                                value=min(5,_n_partidos_total),
+                                step=1,
+                                key="ftbl_n_picks_custom"
+                            )
+                        _n_picks_final=min(int(_n_sel),_n_partidos_total)
+                        if int(_n_sel)>_n_partidos_total:
+                            st.warning(f"Solo hay {_n_partidos_total} partidos analizados. Se usarán todos.")
+                        # ── CAMBIO 3: TICKET SINTETIZADO con N mejores (orden deportivo)
+                        _riesgo_num={"Bajo":2,"Medio":1,"Alto":0}
+                        _conf_num={"🟢 Alta confianza":2,"🟡 Media confianza":1,"🟡 Confianza media":1,"🔴 Baja confianza":0}
+                        _todos_verd=[(k2,v2) for k2,v2 in veredicto_partidos.items()]
+                        _picks_dep=sorted(
+                            _todos_verd,
+                            key=lambda x:(x[1]["n_ias"],_riesgo_num.get(x[1]["riesgo"],0),_conf_num.get(x[1]["conf"],0)),
+                            reverse=True
+                        )
+                        _mejores_n=_picks_dep[:_n_picks_final]
+                        # Construir ticket sintetizado
+                        _cuota_acum=1.0
+                        _ticket_lines=[
+                            f"🎟️ TICKET SINTETIZADO — {_n_picks_final} MEJORES OPORTUNIDADES",
+                            f"Torneo: {liga_act} | {jor_act}",
+                            "Modo: Deportivo primero / cuotas solo referencia",
+                            "━"*24,""
+                        ]
+                        for _pk,_pv in _mejores_n:
+                            _pl,_pv2=_pk.split("|")
+                            _conf_t=_pv["conf"].replace("🟢 ","").replace("🟡 ","").replace("🔴 ","")
+                            _ticket_lines.append(f"⚽ {_pl} vs {_pv2}")
+                            _ticket_lines.append(f"→ {_pv['pred_txt']}")
+                            _ticket_lines.append(f"   Confianza: {_conf_t} | Consenso: {_pv['n_ias']}/{n_ias_ok} IAs | Riesgo: {_pv['riesgo']}")
+                            _ticket_lines.append(f"   Apta para: {_pv['apta_para']}")
+                            _ticket_lines.append("")
+                            _cuota_acum*=_pv["cuota"]
+                        _ticket_lines+=[
+                            "━"*24,
+                            "📌 Referencia económica:",
+                            "Las cuotas son solo referencia de retorno.",
+                            "No fueron criterio principal de selección.",
+                            "",
+                            f"💰 Cuota total estimada: {_cuota_acum:.2f}x",
+                            f"💰 Apuesta $1.000 → Retorno estimado: ${1000*_cuota_acum:,.0f}"
+                        ]
+                        st.code("\n".join(_ticket_lines),language=None)
+                        st.markdown("---")
 
                     # ── SÍNTESIS CONSEJO
                     st.markdown("### 🧠 Síntesis del Consejo")
