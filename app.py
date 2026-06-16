@@ -1911,8 +1911,10 @@ Sé directo, concreto y accionable. Máximo 400 palabras."""
             with st.spinner("🔍 Verificando conexión con IAs..."):
                 _ping=gemini_deporte_fn("Responde solo: OK")
                 st.session_state["ftbl_gemini_status"]="active" if _ping.get("ok") else "failed"
+                st.session_state["ftbl_gemini_err"]=_ping.get("respuesta","")[:150] if not _ping.get("ok") else ""
         if st.session_state.get("ftbl_gemini_status")=="failed":
-            st.warning("⚠️ Gemini no disponible. Análisis con 4 IAs. El flujo continúa normalmente.")
+            _err=st.session_state.get("ftbl_gemini_err","sin detalle")
+            st.warning(f"⚠️ Gemini no disponible: {_err}. Análisis con 4 IAs. El flujo continúa normalmente.")
 
         # ── MODO SIMULADO TOGGLE
         modo_simulado=st.toggle("🔬 Modo simulado (no descuenta bankroll real)",value=True,key="ftbl_modo_sim")
@@ -2361,10 +2363,13 @@ Empate 4.00
                             }
 
                         # Generar 3 tickets diferenciados
-                        picks_ordenados=[(k,v) for k,v in veredicto_partidos.items() if v["ev"]>=0]
-                        picks_ordenados.sort(key=lambda x:-x[1]["n_ias"])
+                        # Todos los partidos ordenados por consenso (FIX 2+3: sin filtro EV)
+                        todos_picks=[(k,v) for k,v in veredicto_partidos.items()]
+                        todos_picks.sort(key=lambda x:-x[1]["n_ias"])
+                        picks_ev_pos=[(k,v) for k,v in todos_picks if v["ev"]>=0]
+                        picks_ordenados=picks_ev_pos  # para rutas y referencias
 
-                        def _ticket_txt(nombre,picks_sel,monto,ligat,jorl):
+                        def _ticket_txt(nombre,picks_sel,monto,ligat,jorl,nota=""):
                             lines=[f"🎟️ {nombre} — {ligat}",f"📅 {jorl}","━"*24]
                             cuota_t=1.0
                             for k,v in picks_sel:
@@ -2375,11 +2380,23 @@ Empate 4.00
                                 cuota_t*=v["cuota"]
                             lines+=["━"*24,f"💰 Apuesta ${monto:,.0f} → Retorno: ${monto*cuota_t:,.0f}",
                                     f"📊 Cuota total: {cuota_t:.2f}x",f"📱 jandrext-ia.streamlit.app | {n_ias_ok}/5 IAs"]
+                            if nota: lines.append(f"📌 {nota}")
                             return "\n".join(lines)
 
-                        ticket_conserv=picks_ordenados[:min(4,len(picks_ordenados))]
-                        ticket_balanc=picks_ordenados[:min(6,len(picks_ordenados))]
-                        ticket_prem=[(k,v) for k,v in picks_ordenados if v["conf"]=="🟢 Alta confianza"][:5]
+                        # FIX 3: Ticket Conservador SIEMPRE generado
+                        # Primero intentar picks con EV>=0 y cuota<=2.50
+                        _cand_conserv=[(k,v) for k,v in todos_picks if v["ev"]>=0 and v["cuota"]<=2.50]
+                        if len(_cand_conserv)>=2:
+                            ticket_conserv=_cand_conserv[:4]
+                            _nota_conserv=""
+                        else:
+                            # FIX 3 fallback: top 3 por consenso sin importar EV ni cuota
+                            ticket_conserv=todos_picks[:min(3,len(todos_picks))]
+                            _nota_conserv="No hay picks premium, pero estas son las mejores opciones disponibles para intento controlado."
+                        st.session_state["ftbl_nota_conserv"]=_nota_conserv
+
+                        ticket_balanc=picks_ev_pos[:min(6,len(picks_ev_pos))] or todos_picks[:min(4,len(todos_picks))]
+                        ticket_prem=[(k,v) for k,v in picks_ev_pos if v["conf"]=="🟢 Alta confianza"][:5]
 
                         gemini_ctx=resp_futbol.get("Gemini",{}).get("respuesta","Sin contexto Gemini")[:300]
 
@@ -2460,12 +2477,13 @@ Empate 4.00
                     with tcol1:
                         st.markdown("**🟢 Conservador ($1.000-$2.000)**")
                         picks_c=tickets_data.get("conservador",[])
+                        nota_c=st.session_state.get("ftbl_nota_conserv","")
                         if picks_c:
-                            txt_c=_ticket_txt("TICKET CONSERVADOR",picks_c,1000,liga_act,jor_act)
+                            txt_c=_ticket_txt("TICKET CONSERVADOR",picks_c,1000,liga_act,jor_act,nota=nota_c)
                             if gemini_ctx: txt_c+=f"\n\n📍 Contexto Gemini:\n{gemini_ctx}"
                             st.code(txt_c,language=None)
                         else:
-                            st.caption("Sin picks con EV positivo suficiente.")
+                            st.info("⚠️ Sin partidos analizados aún. Genera el análisis primero.")
 
                     with tcol2:
                         st.markdown("**🟡 Balanceado ($1.000)**")
@@ -2475,7 +2493,7 @@ Empate 4.00
                             if gemini_ctx: txt_b+=f"\n\n📍 Contexto Gemini:\n{gemini_ctx}"
                             st.code(txt_b,language=None)
                         else:
-                            st.caption("Sin picks disponibles.")
+                            st.info("⚠️ Sin partidos analizados aún. Genera el análisis primero.")
 
                     with tcol3:
                         st.markdown("**🔴 Premium ($5.000) — solo ≥4 IAs**")
@@ -2491,123 +2509,97 @@ Empate 4.00
 
                     st.markdown("---")
 
-                    # ── TOP N RUTAS
-                    top_show=rutas_150[:n_rutas]
-                    st.markdown(f"### 🏆 Top {n_rutas} Rutas (de {len(rutas_150)} generadas)")
-                    for idx,r in enumerate(top_show):
-                        if r["ev_total"]>0.05: color="🟢"
-                        elif r["ev_total"]>0: color="🟡"
-                        else: color="🔴"
-                        # Contar IAs en consenso
-                        n_ias_acuerdo=0
-                        for ia in ias_ok_list:
-                            txt=resp_futbol.get(ia,{}).get("respuesta","").lower()
-                            if str(idx+1) in txt or r["estrategia"].lower()[:6] in txt:
-                                n_ias_acuerdo+=1
-                        # EV negativo NUNCA es Alta confianza
-                        if r["ev_total"]<0:
-                            consenso_ruta="🔴 Bajo valor esperado"
-                        elif n_ias_acuerdo>=4:
-                            consenso_ruta="🟢 Alta confianza"
-                        elif n_ias_acuerdo>=3:
-                            consenso_ruta="🟡 Confianza media"
-                        else:
-                            consenso_ruta="🔴 Baja confianza"
+                    # ── TOP N RUTAS — FIX 4 + FIX 6
+                    # FIX 4: Re-ordenar rutas por consenso IAs primero, luego EV, penalizar cuotas extremas
+                    def _score_ruta(r):
+                        cuota=r.get("cuota_total",1)
+                        ev=r.get("ev_total",0)
+                        n_picks=r.get("n_picks",1)
+                        # Penalizaciones
+                        if cuota>100000: return -9999
+                        if cuota>10000: return -999 + ev
+                        if cuota>1000: return -99 + ev
+                        if ev<-0.03: return ev - 0.5  # No puede ser Top3
+                        # Score: consenso + ev moderado
+                        return ev*0.5 + min(math.log(max(cuota,1.01)),4)*0.3 + n_picks*0.02
+                    rutas_150_sorted=sorted(rutas_150,key=_score_ruta,reverse=True)
 
-                        with st.expander(
-                            f"{color} #{idx+1} | {r['estrategia']} | {r['n_picks']} picks | "
-                            f"Cuota: {r['cuota_total']:.2f} | EV: {r['ev_total']:.3f} | {consenso_ruta}",
-                            expanded=(idx==0)
-                        ):
-                            picks_md="| Partido | Pred | Cuota | EV |\n|---|---|---|---|\n"
-                            for pk in r["picks"]:
-                                picks_md+=f"| {pk['local']} vs {pk['visitante']} | **{pk['pred']}** | {pk['cuota']:.2f} | {pk['ev']:+.3f} |\n"
-                            st.markdown(picks_md)
-                            st.caption(f"IAs en consenso: {n_ias_acuerdo}/{n_ias_ok} | {consenso_ruta}")
+                    # FIX 6: Filtrar rutas ocultas
+                    rutas_ocultas=st.session_state.get("rutas_ocultas",[])
+                    rutas_visibles=[r for r in rutas_150_sorted if r.get("id") not in rutas_ocultas]
+                    top_show=rutas_visibles[:n_rutas]
 
-                            ticket_lines=[
-                                f"🎟️ PARLAY — {liga_act}",f"📅 {jor_act} | {r['estrategia']}",
-                                f"🎯 Cuota: {r['cuota_total']:.2f}x | EV: {r['ev_total']:+.3f}","━"*24,
-                            ]
-                            for pk in r["picks"]:
-                                pred_txt={"1":"Local gana","X":"Empate","2":"Visitante gana"}.get(pk["pred"],pk["pred"])
-                                ticket_lines+=[f"⚽ {pk['local']} vs {pk['visitante']}",f"   → {pred_txt} ({pk['pred']}) @ {pk['cuota']:.2f}"]
-                            ticket_lines+=["━"*24,f"💰 $1.000 → ${1000*r['cuota_total']:,.0f}",
-                                           f"🧠 Football Lab | {consenso_ruta}","📱 jandrext-ia.streamlit.app"]
-                            st.code("\n".join(ticket_lines),language=None)
+                    # Separar en secciones
+                    _sec_rec=[r for r in top_show if r.get("cuota_total",0)<=50 and r.get("ev_total",0)>=-0.03]
+                    _sec_bal=[r for r in top_show if r.get("cuota_total",0)<=1000 and r not in _sec_rec]
+                    _sec_exp=[r for r in top_show if r.get("cuota_total",0)>1000 and r.get("cuota_total",0)<=100000]
+                    _sec_lot=[r for r in top_show if r.get("cuota_total",0)>100000]
+
+                    if rutas_ocultas:
+                        if st.button("👁️ Mostrar rutas ocultas",key="mostrar_ocultas"):
+                            st.session_state["rutas_ocultas"]=[]
+                            st.rerun()
+                        st.caption(f"{len(rutas_ocultas)} ruta(s) oculta(s) | disponibles en Biblioteca")
+
+                    st.markdown(f"### 🏆 Top {len(top_show)} Rutas (de {len(rutas_150)} generadas)")
+
+                    def _render_rutas(lista_rutas,sec_label,expandir_primero=False):
+                        for idx_s,r in enumerate(lista_rutas):
+                            r_id=r.get("id",idx_s)
+                            if r["ev_total"]>0.05: color="🟢"
+                            elif r["ev_total"]>0: color="🟡"
+                            else: color="🔴"
+                            n_ias_acuerdo=0
+                            for ia in ias_ok_list:
+                                txt=resp_futbol.get(ia,{}).get("respuesta","").lower()
+                                if r["estrategia"].lower()[:6] in txt: n_ias_acuerdo+=1
+                            if r["ev_total"]<0:
+                                consenso_ruta="🔴 Bajo valor esperado"
+                            elif n_ias_acuerdo>=4: consenso_ruta="🟢 Alta confianza"
+                            elif n_ias_acuerdo>=3: consenso_ruta="🟡 Confianza media"
+                            else: consenso_ruta="🔴 Baja confianza"
+                            exp_label=(f"{color} {r['estrategia']} | {r['n_picks']} picks | "
+                                       f"Cuota: {r['cuota_total']:.2f} | EV: {r['ev_total']:.3f} | {consenso_ruta}")
+                            with st.expander(exp_label,expanded=(expandir_primero and idx_s==0)):
+                                # FIX 6: Botón ✕ eliminar ruta
+                                col_tbl,col_del=st.columns([10,1])
+                                with col_del:
+                                    if st.button("✕",key=f"del_ruta_{r_id}",help="Ocultar esta ruta"):
+                                        st.session_state.setdefault("rutas_ocultas",[])
+                                        if r_id not in st.session_state["rutas_ocultas"]:
+                                            st.session_state["rutas_ocultas"].append(r_id)
+                                        st.toast("Ruta ocultada. Disponible en Biblioteca.")
+                                        st.rerun()
+                                with col_tbl:
+                                    picks_md="| Partido | Pred | Cuota | EV |\n|---|---|---|---|\n"
+                                    for pk in r["picks"]:
+                                        picks_md+=f"| {pk['local']} vs {pk['visitante']} | **{pk['pred']}** | {pk['cuota']:.2f} | {pk['ev']:+.3f} |\n"
+                                    st.markdown(picks_md)
+                                    st.caption(f"IAs en consenso: {n_ias_acuerdo}/{n_ias_ok} | {consenso_ruta}")
+                                ticket_lines=[
+                                    f"🎟️ PARLAY — {liga_act}",f"📅 {jor_act} | {r['estrategia']}",
+                                    f"🎯 Cuota: {r['cuota_total']:.2f}x | EV: {r['ev_total']:+.3f}","━"*24,
+                                ]
+                                for pk in r["picks"]:
+                                    pred_txt={"1":f"{pk['local']} gana","X":"Empate","2":f"{pk['visitante']} gana"}.get(pk["pred"],pk["pred"])
+                                    ticket_lines+=[f"⚽ {pk['local']} vs {pk['visitante']}",f"   → {pred_txt} ({pk['pred']}) @ {pk['cuota']:.2f}"]
+                                ticket_lines+=["━"*24,f"💰 $1.000 → ${1000*r['cuota_total']:,.0f}",
+                                               f"🧠 Football Lab | {consenso_ruta}","📱 jandrext-ia.streamlit.app"]
+                                st.code("\n".join(ticket_lines),language=None)
+
+                    if _sec_rec:
+                        st.markdown("#### 🎯 Recomendados")
+                        _render_rutas(_sec_rec,"rec",expandir_primero=True)
+                    if _sec_bal:
+                        st.markdown("#### ⚖️ Balanceados")
+                        _render_rutas(_sec_bal,"bal")
+                    if _sec_exp:
+                        st.markdown("#### 🎲 Experimentales _(cuota > 1.000x)_")
+                        _render_rutas(_sec_exp,"exp")
+                    if _sec_lot:
+                        st.markdown("#### 🎰 Entretenimiento / Lotería _(cuota > 100.000x)_")
+                        _render_rutas(_sec_lot,"lot")
 
         # ────────────────────────────────────────────────────────────────
         # TAB 3 — REGISTRO / VOUCHER
-        # ────────────────────────────────────────────────────────────────
-        with tab_f3:
-            st.markdown("### 📒 Registro de Apuesta / Voucher")
-            modo_sim_val=st.session_state.get("ftbl_modo_sim",True)
-            st.info(f"Modo actual: {'🔬 Simulado' if modo_sim_val else '💰 Real'}")
-
-            tickets_data_r=st.session_state.get("ftbl_tickets",{})
-            liga_r=st.session_state.get("ftbl_liga_activa","")
-            jor_r=st.session_state.get("ftbl_jor_activa","")
-            tor_r=st.session_state.get("ftbl_torneo_activo","")
-
-            if not tickets_data_r:
-                st.info("⬅️ Primero genera el análisis en 🎯 Veredicto IA / Tickets")
-            else:
-                tipo_ticket=st.selectbox("Tipo de ticket a registrar",
-                    ["Conservador","Balanceado","Premium","Personalizado"])
-                casa_apuestas=st.selectbox("Casa de apuestas",["Wplay","Codere","Betplay","Otra"])
-                stake=st.number_input("Monto apostado ($)",min_value=0,value=1000,step=500)
-                voucher_txt=st.text_area("📋 Pega aquí el comprobante (opcional)",height=120,
-                    placeholder="Copia el número de ticket o código de confirmación de la casa de apuestas...")
-
-                if st.button("💾 Registrar apuesta",type="primary",use_container_width=True):
-                    ticket_id=str(uuid.uuid4())[:8].upper()
-                    n_ias_r=len(st.session_state.get("ftbl_ias_ok",[]))
-                    supa("football_bets","POST",{
-                        "user_id":u["id"],
-                        "ticket_id":ticket_id,
-                        "casa_apuestas":casa_apuestas,
-                        "torneo":tor_r,
-                        "tipo_ticket":tipo_ticket.lower(),
-                        "stake":stake,
-                        "status":"simulated" if modo_sim_val else "placed",
-                        "voucher_text":voucher_txt,
-                        "consenso_ias":n_ias_r,
-                        "simulado":modo_sim_val,
-                        "ai_ticket_json":json.dumps(tickets_data_r.get(tipo_ticket.lower(),{}),ensure_ascii=False)[:2000]
-                    })
-                    if modo_sim_val:
-                        st.success(f"✅ Ticket #{ticket_id} registrado en modo SIMULADO. No afecta bankroll.")
-                    else:
-                        st.success(f"✅ Ticket #{ticket_id} registrado en modo REAL. Revisa tu saldo.")
-
-                # Apuestas registradas
-                st.markdown("---")
-                st.markdown("### 📋 Apuestas registradas")
-                bets=supa("football_bets",filtro=f"?user_id=eq.{u['id']}&order=created_at.desc&limit=10") or []
-                if not isinstance(bets,list): bets=[]
-                for bet in [x for x in bets if isinstance(x,dict)]:
-                    modo_b="🔬" if bet.get("simulado") else "💰"
-                    st.markdown(
-                        f"{modo_b} **#{bet.get('ticket_id','')}** | {bet.get('tipo_ticket','')} | "
-                        f"{bet.get('casa_apuestas','')} | ${bet.get('stake',0):,.0f} | "
-                        f"Estado: `{bet.get('status','')}`"
-                    )
-
-        # ────────────────────────────────────────────────────────────────
-        # TAB 4 — RESULTADOS
-        # ────────────────────────────────────────────────────────────────
-        with tab_f4:
-            st.markdown("### 📈 Resultados y Accuracy")
-            st.info("📅 Próximamente: carga de resultados reales y cálculo de ROI por estrategia.")
-
-        # ────────────────────────────────────────────────────────────────
-        # TAB 5 — BIBLIOTECA
-        # ────────────────────────────────────────────────────────────────
-        with tab_f5:
-            st.markdown("### 📚 Biblioteca de Bloques")
-            bloques_bib=supa("futbol_bloques",filtro="?order=creado_en.desc") or []
-            if not isinstance(bloques_bib,list): bloques_bib=[]
-            if not bloques_bib:
-                st.info("Aún no hay bloques guardados.")
-            for b in [x for x in bloques_bib[:20] if isinstance(x,dict)]:
-                st.markdown(f"⚽ **{b.get('liga','')}** — {b.get('jornada','')} | {b.get('n_partidos',0)} partidos")
+        # ──────────────────────────────────────────────────────�
