@@ -2602,4 +2602,76 @@ Empate 4.00
 
         # ────────────────────────────────────────────────────────────────
         # TAB 3 — REGISTRO / VOUCHER
-        # ──────────────────────────────────────────────────────�
+        # ────────────────────────────────────────────────────────────────
+        with tab_f3:
+            st.markdown("### 📒 Registro de Apuesta / Voucher")
+            modo_sim_val=st.session_state.get("ftbl_modo_sim",True)
+            st.info(f"Modo actual: {'🔬 Simulado' if modo_sim_val else '💰 Real'}")
+
+            tickets_data_r=st.session_state.get("ftbl_tickets",{})
+            liga_r=st.session_state.get("ftbl_liga_activa","")
+            jor_r=st.session_state.get("ftbl_jor_activa","")
+            tor_r=st.session_state.get("ftbl_torneo_activo","")
+
+            if not tickets_data_r:
+                st.info("⬅️ Primero genera el análisis en 🎯 Veredicto IA / Tickets")
+            else:
+                tipo_ticket=st.selectbox("Tipo de ticket a registrar",
+                    ["Conservador","Balanceado","Premium","Personalizado"])
+                casa_apuestas=st.selectbox("Casa de apuestas",["Wplay","Codere","Betplay","Otra"])
+                stake=st.number_input("Monto apostado ($)",min_value=0,value=1000,step=500)
+                voucher_txt=st.text_area("📋 Pega aquí el comprobante (opcional)",height=120,
+                    placeholder="Copia el número de ticket o código de confirmación de la casa de apuestas...")
+
+                if st.button("💾 Registrar apuesta",type="primary",use_container_width=True):
+                    ticket_id=str(uuid.uuid4())[:8].upper()
+                    n_ias_r=len(st.session_state.get("ftbl_ias_ok",[]))
+                    supa("football_bets","POST",{
+                        "user_id":u["id"],
+                        "ticket_id":ticket_id,
+                        "casa_apuestas":casa_apuestas,
+                        "torneo":tor_r,
+                        "tipo_ticket":tipo_ticket.lower(),
+                        "stake":stake,
+                        "status":"simulated" if modo_sim_val else "placed",
+                        "voucher_text":voucher_txt,
+                        "consenso_ias":n_ias_r,
+                        "simulado":modo_sim_val,
+                        "ai_ticket_json":json.dumps(tickets_data_r.get(tipo_ticket.lower(),{}),ensure_ascii=False)[:2000]
+                    })
+                    if modo_sim_val:
+                        st.success(f"✅ Ticket #{ticket_id} registrado en modo SIMULADO. No afecta bankroll.")
+                    else:
+                        st.success(f"✅ Ticket #{ticket_id} registrado en modo REAL. Revisa tu saldo.")
+
+                # Apuestas registradas
+                st.markdown("---")
+                st.markdown("### 📋 Apuestas registradas")
+                bets=supa("football_bets",filtro=f"?user_id=eq.{u['id']}&order=created_at.desc&limit=10") or []
+                if not isinstance(bets,list): bets=[]
+                for bet in [x for x in bets if isinstance(x,dict)]:
+                    modo_b="🔬" if bet.get("simulado") else "💰"
+                    st.markdown(
+                        f"{modo_b} **#{bet.get('ticket_id','')}** | {bet.get('tipo_ticket','')} | "
+                        f"{bet.get('casa_apuestas','')} | ${bet.get('stake',0):,.0f} | "
+                        f"Estado: `{bet.get('status','')}`"
+                    )
+
+        # ────────────────────────────────────────────────────────────────
+        # TAB 4 — RESULTADOS
+        # ────────────────────────────────────────────────────────────────
+        with tab_f4:
+            st.markdown("### 📈 Resultados y Accuracy")
+            st.info("📅 Próximamente: carga de resultados reales y cálculo de ROI por estrategia.")
+
+        # ────────────────────────────────────────────────────────────────
+        # TAB 5 — BIBLIOTECA
+        # ────────────────────────────────────────────────────────────────
+        with tab_f5:
+            st.markdown("### 📚 Biblioteca de Bloques")
+            bloques_bib=supa("futbol_bloques",filtro="?order=creado_en.desc") or []
+            if not isinstance(bloques_bib,list): bloques_bib=[]
+            if not bloques_bib:
+                st.info("Aún no hay bloques guardados.")
+            for b in [x for x in bloques_bib[:20] if isinstance(x,dict)]:
+                st.markdown(f"⚽ **{b.get('liga','')}** — {b.get('jornada','')} | {b.get('n_partidos',0)} partidos")
