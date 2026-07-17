@@ -2364,6 +2364,31 @@ elif sec=="mesa_ia":
     # MODO GENERAL — Consejo de 5 IAs
     # ════════════════════════════════════════════════════════════════════
     if st.session_state["mesa_modo"]=="general":
+        # ── MESA IA v2 — Consorcio deliberativo (Cowork, orden de A. Tapiero 2026-07-16)
+        try:
+            import mesa_v2_ui
+            _ias_v2={}
+            if get_secret("ANTHROPIC_API_KEY"): _ias_v2["Auditor"]=claude_fn
+            if get_secret("OPENAI_API_KEY"):    _ias_v2["Técnico"]=openai_fn
+            if get_secret("GOOGLE_API_KEY"):    _ias_v2["Operación"]=gemini_fn
+            if len(_ias_v2)<2 and get_secret("GROQ_API_KEY"):
+                _ias_v2.setdefault("Operación",groq_fn)
+            _consolidador=(claude_fn if get_secret("ANTHROPIC_API_KEY")
+                           else (openai_fn if get_secret("OPENAI_API_KEY") else gemini_fn))
+            if not _ias_v2:
+                st.error("No hay ninguna clave de IA configurada en Secrets. "
+                         "La Mesa no puede deliberar.")
+            else:
+                if len(_ias_v2)<3:
+                    st.warning(f"La Mesa está deliberando con {len(_ias_v2)} de 3 roles. "
+                               f"Faltan claves en Secrets para el consorcio completo.")
+                mesa_v2_ui.render(_ias_v2,_consolidador,supa,u,
+                                  st.session_state.get("mesa_proj_id"))
+        except Exception as _e:
+            st.error(f"Mesa IA v2 no disponible: {_e}")
+        st.stop()
+
+    if False:
         st.markdown("## 🧠 Mesa IA — Consejo de Inteligencia")
         st.caption("5 inteligencias artificiales deliberando en paralelo sobre tu consulta estratégica.")
 
