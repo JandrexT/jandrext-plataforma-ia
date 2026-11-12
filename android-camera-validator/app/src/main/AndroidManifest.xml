@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
+    <!-- Para leer versiones de las apps/servicios de cámara de Samsung (visibilidad de paquetes) -->
+    <queries>
+        <package android:name="com.sec.android.app.camera" />
+        <package android:name="com.samsung.android.app.cameraassistant" />
+        <package android:name="com.samsung.android.camerasdkservice" />
+        <package android:name="com.samsung.android.provider.filterprovider" />
+        <package android:name="com.samsung.android.app.camera.sticker.facearavatar.preload" />
+        <package android:name="com.google.android.GoogleCamera" />
+        <package android:name="com.android.camera" />
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:label="Cam Validator"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
